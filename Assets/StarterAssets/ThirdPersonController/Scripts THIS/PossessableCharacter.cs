@@ -49,6 +49,22 @@ public class PossessableCharacter : MonoBehaviour
     public PerspectiveSwapManager swapManager;
 
     // ============================================================
+    // Movement Speeds (Role-based)
+    // ============================================================
+    [Header("Movement Speeds (Role-based)")]
+    [Tooltip("Move speed while this character is controlled (player).")]
+    public float controlledMoveSpeed = 4f;
+
+    [Tooltip("Sprint speed while this character is controlled (player).")]
+    public float controlledSprintSpeed = 6f;
+
+    [Tooltip("Move speed while this character is NOT controlled (NPC).")]
+    public float npcMoveSpeed = 1.8f;
+
+    [Tooltip("Sprint speed while this character is NOT controlled (NPC).")]
+    public float npcSprintSpeed = 2.5f;
+
+    // ============================================================
     // Ambient Loop (per character)
     // ============================================================
     [Header("Ambient Loop (per character)")]
@@ -114,6 +130,17 @@ public class PossessableCharacter : MonoBehaviour
         }
     }
 
+    void Start()
+    {
+        // Ambient starten (läuft dauerhaft leise im Hintergrund)
+        ApplyAmbientSettings();
+        TryStartAmbient();
+
+        // initial speed passend zu initialer Rolle (safety)
+        ApplySpeedProfile();
+        PushSpeedProfileToWander();
+    }
+
     void EnsureAmbientSource()
     {
         if (ambientSource == null)
@@ -125,13 +152,6 @@ public class PossessableCharacter : MonoBehaviour
             ambientSource.volume = ambientVolume;
             ambientSource.pitch = ambientPitch;
         }
-    }
-
-    void Start()
-    {
-        // Ambient starten (läuft dauerhaft leise im Hintergrund)
-        ApplyAmbientSettings();
-        TryStartAmbient();
     }
 
     void ApplyAmbientSettings()
@@ -247,6 +267,32 @@ public class PossessableCharacter : MonoBehaviour
             wander.enabled = (!_isControlled && !_isProximityFrozen);
     }
 
+    void ApplySpeedProfile()
+    {
+        if (!thirdPersonController) return;
+
+        if (_isControlled)
+        {
+            thirdPersonController.MoveSpeed = controlledMoveSpeed;
+            thirdPersonController.SprintSpeed = controlledSprintSpeed;
+        }
+        else
+        {
+            thirdPersonController.MoveSpeed = npcMoveSpeed;
+            thirdPersonController.SprintSpeed = npcSprintSpeed;
+        }
+    }
+
+    void PushSpeedProfileToWander()
+    {
+        // Optional: NPCWander soll dieselben NPC-Werte nutzen
+        if (wander != null)
+        {
+            wander.npcMoveSpeed = npcMoveSpeed;
+            wander.npcSprintSpeed = npcSprintSpeed;
+        }
+    }
+
     /// <summary>
     /// controlled=true  -> Player steuert (PlayerInput an, NPCWander aus)
     /// controlled=false -> NPC läuft ruhig random (PlayerInput aus, NPCWander an) – außer proximity freeze
@@ -291,6 +337,11 @@ public class PossessableCharacter : MonoBehaviour
             inputs.JumpInput(false);
         }
 
+        // Wichtig: erst Wander an/aus, dann Speed setzen
         ApplyWanderState();
+
+        // Speed Profil jetzt passend setzen
+        ApplySpeedProfile();
+        PushSpeedProfileToWander();
     }
 }

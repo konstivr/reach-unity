@@ -21,6 +21,7 @@ public class SpeechInput : MonoBehaviour
 
     AudioClip _recording;
     bool _isRecording;
+    bool _isStopping; // verhindert Doppel-Stop
 
     void Awake()
     {
@@ -31,7 +32,7 @@ public class SpeechInput : MonoBehaviour
 
     void Update()
     {
-        // Während der Reach-Transition: keine Aufnahme starten/stoppen
+        // Während Reach-Transition: keine Aufnahme starten/stoppen
         if (ReachTransitionFX.Instance != null && ReachTransitionFX.Instance.IsTransitioning)
             return;
 
@@ -39,11 +40,12 @@ public class SpeechInput : MonoBehaviour
 
         var inputs = swapManager.current.inputs;
 
-        // Hold-to-record (Right Button / Enter o.ä.)
-        if (inputs.dialogueConfirmDown && !_isRecording)
+        // ✅ Start: nur auf EDGE (Pressed)
+        if (inputs.dialogueConfirmPressed && !_isRecording && !_isStopping)
             StartRecording();
 
-        if (inputs.dialogueConfirmUp && _isRecording)
+        // ✅ Stop: nur auf EDGE (Released)
+        if (inputs.dialogueConfirmReleased && _isRecording && !_isStopping)
             _ = StopRecordingAndRoute();
     }
 
@@ -56,6 +58,8 @@ public class SpeechInput : MonoBehaviour
         }
 
         _isRecording = true;
+        _isStopping = false;
+
         _recording = Microphone.Start(microphoneDevice, false, maxSeconds, frequency);
 
         if (debugLogs)
@@ -64,14 +68,17 @@ public class SpeechInput : MonoBehaviour
 
     async Task StopRecordingAndRoute()
     {
-        _isRecording = false;
+        _isStopping = true;
 
         int pos = Microphone.GetPosition(microphoneDevice);
         Microphone.End(microphoneDevice);
 
+        _isRecording = false;
+
         if (_recording == null)
         {
             Debug.LogError("[SpeechInput] recording is NULL on stop.");
+            _isStopping = false;
             return;
         }
 
@@ -80,11 +87,12 @@ public class SpeechInput : MonoBehaviour
         float[] data = new float[pos];
         _recording.GetData(data, 0);
 
-        // Save WAV (built-in)
+        // Save WAV
         string dir = Path.Combine(Application.persistentDataPath, "recordings");
         Directory.CreateDirectory(dir);
 
         string wavPath = Path.Combine(dir, $"mic_{DateTime.Now:HHmmssfff}.wav");
+
         try
         {
             SaveWav16Mono(wavPath, data, frequency);
@@ -92,6 +100,7 @@ public class SpeechInput : MonoBehaviour
         catch (Exception ex)
         {
             Debug.LogError($"[SpeechInput] SaveWav failed: {ex}");
+            _isStopping = false;
             return;
         }
 
@@ -103,13 +112,15 @@ public class SpeechInput : MonoBehaviour
         {
             if (debugLogs) Debug.Log("[SpeechInput] Routing -> GATE passphrase");
             bool handled = await gate.TryHandleGatePassphrase(wavPath);
-            if (handled) return;
+            _isStopping = false;
+            if (handled) return; // Gate handled it (correct or wrong passphrase)
         }
 
         // 2) Chat block (near next player OR waiting for passphrase)
         if (gate != null && gate.ShouldBlockChat())
         {
             if (debugLogs) Debug.Log("[SpeechInput] Chat blocked (gate context).");
+            _isStopping = false;
             return;
         }
 
@@ -117,11 +128,14 @@ public class SpeechInput : MonoBehaviour
         if (dialogueManager == null)
         {
             Debug.LogError("[SpeechInput] DialogueManager missing.");
+            _isStopping = false;
             return;
         }
 
         if (debugLogs) Debug.Log("[SpeechInput] Routing -> CHAT (Ollama)");
         await dialogueManager.PlayerSpokeFromWav(wavPath);
+
+        _isStopping = false;
     }
 
     // ------------------------------------------------------------

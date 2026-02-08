@@ -11,40 +11,44 @@ public class InteractionGateProximity : MonoBehaviour
     public HUDText hud;
     public ReachTransitionFX transitionFX;
 
+    [Header("Quest / Outreach Lock")]
+    public bool useQuestOutreachLock = true;
+
+    [TextArea(1, 3)]
+    public string outreachLockedMessage = "Finish your tasks (and talk once) before reaching out again.";
+    public float outreachLockedMessageSeconds = 1.6f;
+
     [Header("Gate")]
     public float gateRadius = 2.5f;
-
-    [Tooltip("Wenn true: Gate wird abgebrochen, wenn du weit genug weggehst.")]
     public bool cancelGateWhenLeavingRadius = true;
+    [Range(1.0f, 2.0f)] public float leaveHysteresis = 1.2f;
 
-    [Range(1.0f, 2.0f)]
-    public float leaveHysteresis = 1.2f;
+    [Header("Anti Spam")]
+    public float gateTriggerCooldown = 0.35f;
 
     [Header("Debug")]
     public bool debugLogs = true;
 
     DialogueAgent _nearestGateAgent;
     DialogueAgent _activeGateAgent;
+
     bool _waitingForPassphrase = false;
     bool _gateTtsPlaying = false;
 
-    // ----------------------------
-    // Public State
-    // ----------------------------
+    float _lastGateStartTime = -999f;
+
     public DialogueAgent NearestGateAgent => _nearestGateAgent;
     public bool IsWaitingForPassphrase => _activeGateAgent != null && _waitingForPassphrase;
     public bool IsGateBusy => _gateTtsPlaying || IsWaitingForPassphrase;
     public bool HasGateTargetInRange => _nearestGateAgent != null;
 
-    // ----------------------------
-    // Compatibility API (für SpeechInput/DialogueManager)
-    // ----------------------------
     public bool IsInGateZone => HasGateTargetInRange || IsWaitingForPassphrase;
 
     public bool ShouldBlockChat()
     {
-        // blocken wenn Gate-Kontext: target in range oder passphrase wait
-        return HasGateTargetInRange || IsWaitingForPassphrase;
+        if (_gateTtsPlaying || IsWaitingForPassphrase) return true;
+        if (!IsOutreachAllowed()) return false;
+        return HasGateTargetInRange;
     }
 
     void Awake()
@@ -69,9 +73,8 @@ public class InteractionGateProximity : MonoBehaviour
     void OnSwitched(PossessableCharacter from, PossessableCharacter to)
     {
         ResetGateState(stopSpeaking: true);
-
-        // nach Switch: HUD ist wieder frei → Idle wird Router setzen
         if (hud) hud.ClearSticky();
+        _lastGateStartTime = -999f;
     }
 
     void Update()
@@ -82,8 +85,13 @@ public class InteractionGateProximity : MonoBehaviour
         var currentChar = swapManager.current;
         var inputs = currentChar.inputs;
 
-        _nearestGateAgent = FindNearestUnvisitedAgent(currentChar.transform.position, gateRadius);
+        bool outreachAllowed = IsOutreachAllowed();
 
+        _nearestGateAgent = outreachAllowed
+            ? FindNearestUnvisitedAgent(currentChar.transform.position, gateRadius)
+            : null;
+
+        // cancel when leaving
         if (cancelGateWhenLeavingRadius && _activeGateAgent != null)
         {
             float dist = Vector3.Distance(currentChar.transform.position, _activeGateAgent.transform.position);
@@ -95,30 +103,56 @@ public class InteractionGateProximity : MonoBehaviour
             }
         }
 
-        // F / dialogueStart: Gate triggern
-        if (inputs.dialogueStart && _nearestGateAgent != null)
-            StartGateFor(_nearestGateAgent);
+        // ✅ IMPORTANT: use EDGE, not held
+        if (!inputs.dialogueStartPressed) return;
+
+        if (!outreachAllowed)
+        {
+            if (hud != null && !hud.IsLockedByFX)
+                hud.SetNpcTimed(outreachLockedMessage, outreachLockedMessageSeconds);
+
+            if (debugLogs) Debug.Log("[Gate] Outreach locked -> ignore.");
+            return;
+        }
+
+        if (_gateTtsPlaying || _waitingForPassphrase)
+        {
+            if (debugLogs) Debug.Log("[Gate] Busy/waiting -> ignore trigger.");
+            return;
+        }
+
+        if (Time.time - _lastGateStartTime < gateTriggerCooldown)
+        {
+            if (debugLogs) Debug.Log("[Gate] Cooldown -> ignore trigger.");
+            return;
+        }
+
+        if (_nearestGateAgent == null) return;
+
+        _lastGateStartTime = Time.time;
+        StartGateFor(_nearestGateAgent);
+    }
+
+    bool IsOutreachAllowed()
+    {
+        if (!useQuestOutreachLock) return true;
+        if (QuestStateManager.Instance == null) return true;
+        if (swapManager == null || swapManager.current == null) return true;
+        return QuestStateManager.Instance.CanOutreachFrom(swapManager.current);
     }
 
     async void StartGateFor(DialogueAgent agent)
     {
         if (!agent || !agent.owner) return;
-        if (_gateTtsPlaying) return;
+        if (!speechOutput) return;
 
-        if (_activeGateAgent && _activeGateAgent != agent)
-            _activeGateAgent.StopSpeaking();
+        if (_gateTtsPlaying || _waitingForPassphrase) return;
 
         _activeGateAgent = agent;
-        _waitingForPassphrase = false;
         _gateTtsPlaying = true;
+        _waitingForPassphrase = false;
 
         if (hud) hud.SetSticky(agent.gateTtsLine);
-
-        if (!speechOutput)
-        {
-            _gateTtsPlaying = false;
-            return;
-        }
 
         AudioClip clip = await speechOutput.TextToSpeech(agent.gateTtsLine);
 
@@ -128,23 +162,19 @@ public class InteractionGateProximity : MonoBehaviour
             return;
         }
 
-        if (clip == null)
-        {
-            _gateTtsPlaying = false;
-            return;
-        }
-
-        agent.Speak(clip);
+        if (clip != null)
+            agent.Speak(clip);
 
         _gateTtsPlaying = false;
         _waitingForPassphrase = true;
+
+        if (debugLogs) Debug.Log("[Gate] Gate line played -> waiting for passphrase.");
     }
 
     public async Task<bool> TryHandleGatePassphrase(string wavPath)
     {
         if (transitionFX != null && transitionFX.IsTransitioning) return false;
         if (_activeGateAgent == null || !_waitingForPassphrase || _gateTtsPlaying) return false;
-
         if (!whisperSTT) return false;
 
         string stt = await whisperSTT.TranscribeWav(wavPath);
@@ -153,9 +183,7 @@ public class InteractionGateProximity : MonoBehaviour
         if (!ok) return true;
 
         var target = _activeGateAgent.owner;
-
         _waitingForPassphrase = false;
-        _activeGateAgent = null;
 
         bool switched = false;
         if (transitionFX != null) switched = await transitionFX.PlayReachAndSwitch(target);

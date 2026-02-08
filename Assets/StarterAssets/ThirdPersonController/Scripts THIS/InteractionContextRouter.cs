@@ -18,6 +18,7 @@ public class InteractionContextRouter : MonoBehaviour
     public float maxObjectScanRadius = 3.0f;
 
     PlayerAssignedWorldObject _nearestObj;
+    PlayerAssignedWorldObject _lastObjInRange;
     bool _wasInObjRange = false;
 
     void Awake()
@@ -40,59 +41,63 @@ public class InteractionContextRouter : MonoBehaviour
     void OnSwitched(PossessableCharacter from, PossessableCharacter to)
     {
         _nearestObj = null;
+        _lastObjInRange = null;
         _wasInObjRange = false;
-        if (hud) hud.SetIdlePerspective(); // nach Perspektivenwechsel “Talk to me”
+        if (hud) hud.SetIdlePerspective();
     }
 
     void Update()
     {
         if (!swapManager || !swapManager.current || !swapManager.current.inputs) return;
 
-        // Transition blockt UI-Routing (FX übernimmt)
         if (ReachTransitionFX.Instance != null && ReachTransitionFX.Instance.IsTransitioning)
             return;
 
         var current = swapManager.current;
         var inputs = current.inputs;
 
-        // 1) Nearest assigned object finden
         _nearestObj = FindNearestAssignedObject(current);
 
         bool inObj = _nearestObj != null && _nearestObj.IsInRange(current);
         bool inGateRange = gate != null && gate.HasGateTargetInRange;
 
-        // Wenn man einen Objekt-Radius verlässt: sticky zurücksetzen + obj local state reset
+        // leaving object zone: use LAST object that was in range
         if (_wasInObjRange && !inObj)
         {
-            if (_nearestObj != null) _nearestObj.ResetLocalStateOnExit();
+            if (_lastObjInRange != null)
+                _lastObjInRange.ResetLocalStateOnExit();
+
             if (hud) hud.ClearSticky();
+            _lastObjInRange = null;
         }
+
+        if (inObj)
+            _lastObjInRange = _nearestObj;
+
         _wasInObjRange = inObj;
 
-        // 2) HUD setzen (nur wenn nicht Sticky/FX locked)
+        // HUD (if free)
         if (hud != null && !hud.IsLockedByFX && !hud.IsSticky)
         {
             if (inObj)
-                hud.SetPrompt(_nearestObj.GetPrompt().Length > 0 ? _nearestObj.GetPrompt() : promptObject);
+                hud.SetPrompt((_nearestObj.GetPrompt().Length > 0) ? _nearestObj.GetPrompt() : promptObject);
             else if (inGateRange)
                 hud.SetPrompt(promptReachOut);
             else
                 hud.SetIdleAuto();
         }
 
-        // 3) Input F routing (dialogueStart)
-        if (inputs.dialogueStart)
-        {
-            // a) Object hat Vorrang
-            if (inObj)
-            {
-                _nearestObj.HandleInputF(hud);
-                return;
-            }
+        // ✅ IMPORTANT: use EDGE
+        if (!inputs.dialogueStartPressed) return;
 
-            // b) Gate handled F selbst (StartGateFor)
-            // -> kein extra call nötig
+        // a) Object has priority
+        if (inObj)
+        {
+            _nearestObj.HandleInputF(hud);
+            return;
         }
+
+        // b) Gate handles it internally (InteractionGateProximity)
     }
 
     PlayerAssignedWorldObject FindNearestAssignedObject(PossessableCharacter current)
@@ -101,15 +106,16 @@ public class InteractionContextRouter : MonoBehaviour
         PlayerAssignedWorldObject best = null;
         float bestSqr = float.MaxValue;
 
+        float rSqr = maxObjectScanRadius * maxObjectScanRadius;
+
         foreach (var o in all)
         {
             if (!o || o.IsCompleted) continue;
             if (!o.assignedTo || o.assignedTo != current) continue;
 
             float dSqr = (o.transform.position - current.transform.position).sqrMagnitude;
-            if (dSqr <= maxObjectScanRadius * maxObjectScanRadius && dSqr < bestSqr)
+            if (dSqr <= rSqr && dSqr < bestSqr)
             {
-                // und wirklich in range?
                 if (o.IsInRange(current))
                 {
                     bestSqr = dSqr;

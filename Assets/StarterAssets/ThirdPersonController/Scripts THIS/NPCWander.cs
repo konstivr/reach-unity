@@ -8,7 +8,7 @@ public class NPCWander : MonoBehaviour
     public StarterAssetsInputs inputs;
     public ThirdPersonController thirdPersonController;
 
-    [Header("Behaviour (calm, but not slow)")]
+    [Header("Behaviour (calm)")]
     [Tooltip("NPC pauses sometimes (seconds).")]
     public Vector2 idleTimeRange = new Vector2(0.6f, 2.0f);
 
@@ -26,11 +26,12 @@ public class NPCWander : MonoBehaviour
     [Range(10f, 180f)]
     public float forwardConeAngle = 110f;
 
-    [Header("Speed Boost while AI is active")]
-    [Tooltip("Multiplies ThirdPersonController MoveSpeed/SprintSpeed while AI is enabled.\n" +
-             "Useful when your base MoveSpeed is low (e.g. 2.0).")]
-    [Range(0.2f, 3f)]
-    public float aiMoveSpeedMultiplier = 1.45f;
+    [Header("NPC Speed Profile (used while this script is enabled)")]
+    [Tooltip("Move speed while NPCWander is enabled.")]
+    public float npcMoveSpeed = 1.8f;
+
+    [Tooltip("Sprint speed while NPCWander is enabled (NPC usually doesn't sprint, but keep sane).")]
+    public float npcSprintSpeed = 2.5f;
 
     [Header("Obstacle Avoidance (recommended)")]
     public bool avoidObstacles = true;
@@ -47,6 +48,7 @@ public class NPCWander : MonoBehaviour
     private Vector3 _worldDir;
     private Camera _mainCam;
 
+    // Cache original speeds so we can restore them when disabled
     private float _origMoveSpeed;
     private float _origSprintSpeed;
     private bool _cachedSpeeds;
@@ -71,10 +73,10 @@ public class NPCWander : MonoBehaviour
         if (inputs)
             inputs.analogMovement = true; // required for magnitude-based calm movement
 
-        ApplyAISpeed(true);
+        ApplyNPCSpeeds(true);
         EnterIdle();
 
-        if (debugLogs) Debug.Log($"[NPCWander] Enabled on '{name}'");
+        if (debugLogs) Debug.Log($"[NPCWander] Enabled on '{name}' | npcMove={npcMoveSpeed:0.00}");
     }
 
     private void OnDisable()
@@ -88,7 +90,7 @@ public class NPCWander : MonoBehaviour
             inputs.JumpInput(false);
         }
 
-        ApplyAISpeed(false);
+        ApplyNPCSpeeds(false);
 
         if (debugLogs) Debug.Log($"[NPCWander] Disabled on '{name}'");
     }
@@ -182,17 +184,18 @@ public class NPCWander : MonoBehaviour
         return new Vector2(Mathf.Sin(rad), Mathf.Cos(rad)) * Mathf.Clamp01(magnitude);
     }
 
-    private void ApplyAISpeed(bool aiActive)
+    private void ApplyNPCSpeeds(bool npcActive)
     {
         if (!thirdPersonController || !_cachedSpeeds) return;
 
-        if (aiActive)
+        if (npcActive)
         {
-            thirdPersonController.MoveSpeed = _origMoveSpeed * aiMoveSpeedMultiplier;
-            thirdPersonController.SprintSpeed = _origSprintSpeed * aiMoveSpeedMultiplier;
+            thirdPersonController.MoveSpeed = npcMoveSpeed;
+            thirdPersonController.SprintSpeed = npcSprintSpeed;
         }
         else
         {
+            // Restore original values (PossessableCharacter will set correct profile anyway)
             thirdPersonController.MoveSpeed = _origMoveSpeed;
             thirdPersonController.SprintSpeed = _origSprintSpeed;
         }
