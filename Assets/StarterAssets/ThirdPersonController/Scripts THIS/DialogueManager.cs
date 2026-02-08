@@ -1,3 +1,9 @@
+// DialogueManager.cs
+// -> Vollständig, inkl. Hearts-Logik:
+//    - Default (EnteredCount <= 1): Hearts aus
+//    - Besessen (EnteredCount > 1): Hearts an + Reset bei Switch
+//    - Optional: MarkFreeTalkDone Hook -> kann 1 Herz füllen, wenn ihr wollt
+
 using System.Collections.Generic;
 using UnityEngine;
 
@@ -21,10 +27,6 @@ public class DialogueManager : MonoBehaviour
 
     [Header("HUD timing")]
     public float chatNpcHoldSeconds = 6.0f;
-
-    [Header("Quest (optional)")]
-    [Tooltip("Wenn true: Nach dem ersten erfolgreichen Chat in einer Perspektive wird QuestStateManager.MarkFreeTalkDone(current) aufgerufen (falls vorhanden).")]
-    public bool markFreeTalkDone = true;
 
     [Header("Debug")]
     public bool debugLogs = true;
@@ -64,6 +66,9 @@ public class DialogueManager : MonoBehaviour
 
         if (hud != null)
             hud.SetIdleAuto();
+
+        // Default-Perspektive: Hearts aus
+        ApplyHeartsVisibilityAndResetIfNeeded(reset: false);
     }
 
     void OnSwitched(PossessableCharacter from, PossessableCharacter to)
@@ -76,11 +81,31 @@ public class DialogueManager : MonoBehaviour
 
         if (hud != null)
             hud.SetIdlePerspective();
+
+        // Bei jeder neuen Perspektive: Hearts reset (aber nur wenn besessen)
+        ApplyHeartsVisibilityAndResetIfNeeded(reset: true);
+    }
+
+    void ApplyHeartsVisibilityAndResetIfNeeded(bool reset)
+    {
+        // Default ist: EnteredCount <= 1 (Start-Char). Dort keine Hearts anzeigen.
+        bool isDefaultPerspective = (swapManager == null) || (swapManager.EnteredCount <= 1);
+
+        if (HUDHearts.Instance == null) return;
+
+        if (isDefaultPerspective)
+        {
+            HUDHearts.Instance.Hide();
+            return;
+        }
+
+        // besessen: anzeigen
+        if (reset) HUDHearts.Instance.ResetHeartsAndShow();
+        else HUDHearts.Instance.ResetHeartsAndShow(); // beim Start in besessen (falls Start nicht default ist)
     }
 
     void RefreshCurrentPlayerAgent(bool resetHistory)
     {
-        // Erwartet: swapManager.CurrentAgent existiert in eurem SwapManager
         _currentPlayerAgent = (swapManager != null) ? swapManager.CurrentAgent : null;
 
         if (debugLogs)
@@ -115,7 +140,6 @@ public class DialogueManager : MonoBehaviour
         if (ReachTransitionFX.Instance != null && ReachTransitionFX.Instance.IsTransitioning)
             return;
 
-        // Gate blockt Chat nur wenn es wirklich soll (target in range + outreach allowed, oder passphrase wait)
         if (gate != null && gate.ShouldBlockChat())
         {
             if (debugLogs) Debug.Log("[DialogueManager] Chat blocked (gate context).");
@@ -133,7 +157,6 @@ public class DialogueManager : MonoBehaviour
 
         state = DialogueState.NPCResponding;
 
-        // 1) STT
         string playerText = await whisperSTT.TranscribeWav(wavPath);
         if (debugLogs) Debug.Log($"[DialogueManager] PLAYER TEXT: '{playerText}'");
 
@@ -143,29 +166,29 @@ public class DialogueManager : MonoBehaviour
             return;
         }
 
-        // 2) History
         _messages.Add(new OllamaClient.ChatMessage { role = "user", content = playerText });
         TrimHistory();
 
-        // 3) Ollama
         string npcText = await ollama.ChatOnce(_messages);
         if (debugLogs) Debug.Log($"[DialogueManager] NPC TEXT:\n{npcText}");
 
         _messages.Add(new OllamaClient.ChatMessage { role = "assistant", content = npcText });
         TrimHistory();
 
-        // 4) HUD
         if (hud != null)
             hud.SetNpcTimed(npcText, chatNpcHoldSeconds);
 
-        // 5) TTS
         AudioClip clip = await speechOutput.TextToSpeech(npcText);
         _currentPlayerAgent.Speak(clip);
 
-        // 6) Optional: Free-talk Flag für Quest-System
-        if (markFreeTalkDone && swapManager != null && swapManager.current != null && QuestStateManager.Instance != null)
+        // OPTIONAL: Wenn ihr "freier Talk" als 3. Herz zählen wollt:
+        // -> Füllt 1 Herz, sobald einmal ein echter Chat durchgelaufen ist.
+        // -> Entfernen, wenn ihr das lieber über Quest-Logic macht.
+        if (swapManager != null && swapManager.EnteredCount > 1 && HUDHearts.Instance != null)
         {
-            QuestStateManager.Instance.MarkFreeTalkDone(swapManager.current);
+            // nur wenn noch nicht voll (damit es nicht dauernd weiterzählt)
+            if (HUDHearts.Instance.GetFilled() < 3)
+                HUDHearts.Instance.Advance();
         }
 
         state = DialogueState.Listening;

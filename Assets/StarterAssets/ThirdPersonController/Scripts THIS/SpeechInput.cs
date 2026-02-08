@@ -41,11 +41,11 @@ public class SpeechInput : MonoBehaviour
         var inputs = swapManager.current.inputs;
 
         // ✅ Start: nur auf EDGE (Pressed)
-        if (inputs.dialogueConfirmPressed && !_isRecording && !_isStopping)
+        if (inputs.dialogueConfirmDown && !_isRecording && !_isStopping)
             StartRecording();
 
         // ✅ Stop: nur auf EDGE (Released)
-        if (inputs.dialogueConfirmReleased && _isRecording && !_isStopping)
+        if (inputs.dialogueConfirmUp && _isRecording && !_isStopping)
             _ = StopRecordingAndRoute();
     }
 

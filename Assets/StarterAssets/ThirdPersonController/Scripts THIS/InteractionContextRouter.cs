@@ -88,7 +88,7 @@ public class InteractionContextRouter : MonoBehaviour
         }
 
         // ✅ IMPORTANT: use EDGE
-        if (!inputs.dialogueStartPressed) return;
+        if (!inputs.dialogueStart) return;
 
         // a) Object has priority
         if (inObj)

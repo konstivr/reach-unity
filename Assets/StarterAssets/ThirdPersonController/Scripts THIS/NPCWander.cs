@@ -9,29 +9,25 @@ public class NPCWander : MonoBehaviour
     public ThirdPersonController thirdPersonController;
 
     [Header("Behaviour (calm)")]
-    [Tooltip("NPC pauses sometimes (seconds).")]
     public Vector2 idleTimeRange = new Vector2(0.6f, 2.0f);
-
-    [Tooltip("NPC walks in one direction (seconds).")]
     public Vector2 walkTimeRange = new Vector2(2.0f, 6.0f);
 
-    [Tooltip("Input magnitude (0..1). Higher = more natural walking pace.")]
     [Range(0.1f, 1f)]
     public float walkInputMagnitude = 0.78f;
 
-    [Tooltip("Prefer directions roughly forward relative to current facing (feels less random).")]
     public bool preferForwardCone = true;
 
-    [Tooltip("Cone angle around forward (degrees). 90–120 looks natural.")]
     [Range(10f, 180f)]
     public float forwardConeAngle = 110f;
 
-    [Header("NPC Speed Profile (used while this script is enabled)")]
-    [Tooltip("Move speed while NPCWander is enabled.")]
-    public float npcMoveSpeed = 1.8f;
+    [Header("Speed Handling")]
+    [Tooltip("Wenn TRUE: NPCWander verändert KEINE MoveSpeed/SprintSpeed mehr.\n" +
+             "Die Speed-Steuerung passiert zentral über PossessableCharacter.SetControlled().")]
+    public bool doNotTouchSpeeds = true;
 
-    [Tooltip("Sprint speed while NPCWander is enabled (NPC usually doesn't sprint, but keep sane).")]
-    public float npcSprintSpeed = 2.5f;
+    [Tooltip("Nur relevant wenn doNotTouchSpeeds = false.")]
+    [Range(0.2f, 3f)]
+    public float aiMoveSpeedMultiplier = 1.0f;
 
     [Header("Obstacle Avoidance (recommended)")]
     public bool avoidObstacles = true;
@@ -48,7 +44,6 @@ public class NPCWander : MonoBehaviour
     private Vector3 _worldDir;
     private Camera _mainCam;
 
-    // Cache original speeds so we can restore them when disabled
     private float _origMoveSpeed;
     private float _origSprintSpeed;
     private bool _cachedSpeeds;
@@ -71,17 +66,18 @@ public class NPCWander : MonoBehaviour
     private void OnEnable()
     {
         if (inputs)
-            inputs.analogMovement = true; // required for magnitude-based calm movement
+            inputs.analogMovement = true;
 
-        ApplyNPCSpeeds(true);
+        if (!doNotTouchSpeeds)
+            ApplyAISpeed(true);
+
         EnterIdle();
 
-        if (debugLogs) Debug.Log($"[NPCWander] Enabled on '{name}' | npcMove={npcMoveSpeed:0.00}");
+        if (debugLogs) Debug.Log($"[NPCWander] Enabled on '{name}' doNotTouchSpeeds={doNotTouchSpeeds}");
     }
 
     private void OnDisable()
     {
-        // Reset inputs so nothing "sticks"
         if (inputs)
         {
             inputs.MoveInput(Vector2.zero);
@@ -90,7 +86,8 @@ public class NPCWander : MonoBehaviour
             inputs.JumpInput(false);
         }
 
-        ApplyNPCSpeeds(false);
+        if (!doNotTouchSpeeds)
+            ApplyAISpeed(false);
 
         if (debugLogs) Debug.Log($"[NPCWander] Disabled on '{name}'");
     }
@@ -173,29 +170,26 @@ public class NPCWander : MonoBehaviour
 
     private Vector2 WorldDirToInput(Vector3 worldDir, float magnitude)
     {
-        // ThirdPersonController moves relative to camera yaw.
         float camYaw = (_mainCam != null) ? _mainCam.transform.eulerAngles.y : 0f;
         float desiredYaw = Mathf.Atan2(worldDir.x, worldDir.z) * Mathf.Rad2Deg;
 
         float localYaw = Mathf.DeltaAngle(camYaw, desiredYaw);
         float rad = localYaw * Mathf.Deg2Rad;
 
-        // x = strafe, y = forward in StarterAssetsInputs
         return new Vector2(Mathf.Sin(rad), Mathf.Cos(rad)) * Mathf.Clamp01(magnitude);
     }
 
-    private void ApplyNPCSpeeds(bool npcActive)
+    private void ApplyAISpeed(bool aiActive)
     {
         if (!thirdPersonController || !_cachedSpeeds) return;
 
-        if (npcActive)
+        if (aiActive)
         {
-            thirdPersonController.MoveSpeed = npcMoveSpeed;
-            thirdPersonController.SprintSpeed = npcSprintSpeed;
+            thirdPersonController.MoveSpeed = _origMoveSpeed * aiMoveSpeedMultiplier;
+            thirdPersonController.SprintSpeed = _origSprintSpeed * aiMoveSpeedMultiplier;
         }
         else
         {
-            // Restore original values (PossessableCharacter will set correct profile anyway)
             thirdPersonController.MoveSpeed = _origMoveSpeed;
             thirdPersonController.SprintSpeed = _origSprintSpeed;
         }

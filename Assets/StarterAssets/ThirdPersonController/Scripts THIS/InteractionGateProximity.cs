@@ -104,7 +104,7 @@ public class InteractionGateProximity : MonoBehaviour
         }
 
         // ✅ IMPORTANT: use EDGE, not held
-        if (!inputs.dialogueStartPressed) return;
+        if (!inputs.dialogueStart) return;
 
         if (!outreachAllowed)
         {

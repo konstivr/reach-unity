@@ -7,7 +7,6 @@ using StarterAssets;
 
 public class PossessableCharacter : MonoBehaviour
 {
-    // Registry aller validen spielbaren Characters
     public static readonly List<PossessableCharacter> ValidCharacters = new List<PossessableCharacter>();
 
     [Header("Auto-References (optional)")]
@@ -33,36 +32,32 @@ public class PossessableCharacter : MonoBehaviour
     [Range(0f, 1f)] public float proximityAuraMaxWeight = 1f;
 
     [Header("Proximity Reaction (Stop + LookAt)")]
-    [Tooltip("Wenn true: NPC stoppt und schaut den aktiven Player an, sobald dieser in Reichweite ist.")]
     public bool enableProximityStopLook = true;
-
-    [Tooltip("Radius, in dem der NPC stehen bleibt und schaut. 0 = aus (oder enable=false).")]
     public float proximityStopRadius = 3.0f;
-
-    [Tooltip("Wie schnell er sich dreht (Grad/Sek).")]
     public float proximityTurnSpeed = 360f;
-
-    [Tooltip("Blickpunkt-Höhe (z.B. 1.6 = Kopf).")]
     public float proximityLookHeight = 1.6f;
 
     [Tooltip("Optional: Wenn gesetzt, nutzt dieses Script diesen SwapManager statt FindObjectOfType.")]
     public PerspectiveSwapManager swapManager;
 
     // ============================================================
-    // Movement Speeds (Role-based)
+    // Movement Speeds (Player vs NPC)
     // ============================================================
-    [Header("Movement Speeds (Role-based)")]
-    [Tooltip("Move speed while this character is controlled (player).")]
-    public float controlledMoveSpeed = 4f;
+    [Header("Movement Speeds")]
+    [Tooltip("MoveSpeed für den aktiven (kontrollierten) Player.")]
+    public float playerMoveSpeed = 4.5f;
 
-    [Tooltip("Sprint speed while this character is controlled (player).")]
-    public float controlledSprintSpeed = 6f;
+    [Tooltip("SprintSpeed für den aktiven Player (nur relevant, wenn sprint genutzt wird).")]
+    public float playerSprintSpeed = 6.0f;
 
-    [Tooltip("Move speed while this character is NOT controlled (NPC).")]
-    public float npcMoveSpeed = 1.8f;
+    [Tooltip("MoveSpeed für NPC (nicht kontrolliert).")]
+    public float npcMoveSpeed = 2.2f;
 
-    [Tooltip("Sprint speed while this character is NOT controlled (NPC).")]
-    public float npcSprintSpeed = 2.5f;
+    [Tooltip("SprintSpeed für NPC (meist egal, aber der ThirdPersonController hat den Wert).")]
+    public float npcSprintSpeed = 3.0f;
+
+    [Tooltip("Wenn true: überschreibt beim Switch die ThirdPersonController Speeds automatisch.")]
+    public bool applySpeedsOnControlChange = true;
 
     // ============================================================
     // Ambient Loop (per character)
@@ -71,9 +66,8 @@ public class PossessableCharacter : MonoBehaviour
     public AudioClip ambientLoop;
 
     [Range(0f, 1f)]
-    public float ambientVolume = 0.25f;
+    public float ambientVolume = 0.05f;
 
-    [Tooltip("Optional: kleine Random-Pitch-Variation")]
     [Range(0.8f, 1.2f)]
     public float ambientPitch = 1.0f;
 
@@ -85,7 +79,6 @@ public class PossessableCharacter : MonoBehaviour
 
     public bool IsValid { get; private set; }
 
-    // internal state
     bool _isControlled = false;
     bool _isProximityFrozen = false;
 
@@ -124,21 +117,9 @@ public class PossessableCharacter : MonoBehaviour
                 $"PlayerInput={(playerInput ? "OK" : "NULL")} | " +
                 $"Wander={(wander ? "OK" : "NULL")} | " +
                 $"SwapManager={(swapManager ? swapManager.name : "NULL")} | " +
-                $"CamTarget={(cameraTarget ? cameraTarget.name : "NULL")} | " +
-                $"Ambient={(ambientLoop ? ambientLoop.name : "None")}"
+                $"CamTarget={(cameraTarget ? cameraTarget.name : "NULL")}"
             );
         }
-    }
-
-    void Start()
-    {
-        // Ambient starten (läuft dauerhaft leise im Hintergrund)
-        ApplyAmbientSettings();
-        TryStartAmbient();
-
-        // initial speed passend zu initialer Rolle (safety)
-        ApplySpeedProfile();
-        PushSpeedProfileToWander();
     }
 
     void EnsureAmbientSource()
@@ -152,6 +133,16 @@ public class PossessableCharacter : MonoBehaviour
             ambientSource.volume = ambientVolume;
             ambientSource.pitch = ambientPitch;
         }
+    }
+
+    void Start()
+    {
+        ApplyAmbientSettings();
+        TryStartAmbient();
+
+        // Initial: wenn nicht kontrolliert gestartet -> NPC Speeds
+        if (applySpeedsOnControlChange)
+            ApplyMovementSpeeds(_isControlled);
     }
 
     void ApplyAmbientSettings()
@@ -244,7 +235,6 @@ public class PossessableCharacter : MonoBehaviour
     {
         _isProximityFrozen = frozen;
 
-        // SUPER wichtig: Move Input aktiv auf 0 setzen, damit nichts weiter "driftet"
         if (inputs)
         {
             inputs.MoveInput(Vector2.zero);
@@ -253,7 +243,6 @@ public class PossessableCharacter : MonoBehaviour
             inputs.JumpInput(false);
         }
 
-        // Wander nur aktiv, wenn NPC und NICHT frozen
         ApplyWanderState();
 
         if (debugLogs)
@@ -267,29 +256,24 @@ public class PossessableCharacter : MonoBehaviour
             wander.enabled = (!_isControlled && !_isProximityFrozen);
     }
 
-    void ApplySpeedProfile()
+    void ApplyMovementSpeeds(bool controlled)
     {
         if (!thirdPersonController) return;
 
-        if (_isControlled)
+        if (controlled)
         {
-            thirdPersonController.MoveSpeed = controlledMoveSpeed;
-            thirdPersonController.SprintSpeed = controlledSprintSpeed;
+            thirdPersonController.MoveSpeed = playerMoveSpeed;
+            thirdPersonController.SprintSpeed = playerSprintSpeed;
         }
         else
         {
             thirdPersonController.MoveSpeed = npcMoveSpeed;
             thirdPersonController.SprintSpeed = npcSprintSpeed;
         }
-    }
 
-    void PushSpeedProfileToWander()
-    {
-        // Optional: NPCWander soll dieselben NPC-Werte nutzen
-        if (wander != null)
+        if (debugLogs)
         {
-            wander.npcMoveSpeed = npcMoveSpeed;
-            wander.npcSprintSpeed = npcSprintSpeed;
+            Debug.Log($"[Possessable] ApplyMovementSpeeds -> '{name}' controlled={controlled} MoveSpeed={thirdPersonController.MoveSpeed:0.00} SprintSpeed={thirdPersonController.SprintSpeed:0.00}");
         }
     }
 
@@ -328,6 +312,10 @@ public class PossessableCharacter : MonoBehaviour
             rigidBodyPush.canPush = controlled;
         }
 
+        // Speeds sauber setzen (Player vs NPC)
+        if (applySpeedsOnControlChange)
+            ApplyMovementSpeeds(controlled);
+
         // Safety: keine „hängenden“ Inputs beim Wechsel
         if (inputs)
         {
@@ -337,11 +325,6 @@ public class PossessableCharacter : MonoBehaviour
             inputs.JumpInput(false);
         }
 
-        // Wichtig: erst Wander an/aus, dann Speed setzen
         ApplyWanderState();
-
-        // Speed Profil jetzt passend setzen
-        ApplySpeedProfile();
-        PushSpeedProfileToWander();
     }
 }

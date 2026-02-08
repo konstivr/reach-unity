@@ -15,13 +15,26 @@ public class SpeechOutput : MonoBehaviour
     [Tooltip("Falls pyper installiert: Pfad z.B. /opt/homebrew/bin/pyper oder leer lassen und usePyper=false")]
     public bool usePyper = false;
     public string pyperBinaryPath = "/opt/homebrew/bin/pyper";
+
     [Tooltip("Optional voice name, je nach pyper build")]
-    public string pyperVoice = ""; // z.B. "en_US" oder leer
+    public string pyperVoice = ""; // wird automatisch auf Englisch gesetzt, falls leer
 
     [Header("Fallback: macOS say")]
     [Tooltip("macOS say ist i.d.R. verfügbar")]
     public bool useMacSayFallback = true;
-    public string macSayVoice = "Anna"; // Deutsch: Anna, Englisch: Samantha, etc.
+
+    [Tooltip("Wird automatisch auf Englisch gesetzt (z.B. Samantha).")]
+    public string macSayVoice = "Samantha";
+
+    [Header("Force English")]
+    [Tooltip("Wenn true: erzwingt Englisch für Pyper + macOS say (Voice/Language).")]
+    public bool forceEnglish = true;
+
+    [Tooltip("Pyper Voice für Englisch (je nach Build z.B. en_US, en-US, en_GB).")]
+    public string forcedPyperEnglishVoice = "en_US";
+
+    [Tooltip("macOS say Voice für Englisch (z.B. Samantha, Alex, Daniel).")]
+    public string forcedMacEnglishVoice = "Samantha";
 
     [Header("Audio Settings")]
     public int sampleRate = 44100;
@@ -35,13 +48,30 @@ public class SpeechOutput : MonoBehaviour
 
         if (debugLogs)
         {
-            UDebug.Log($"[SpeechOutput] Awake | usePyper={usePyper} pyperExists={File.Exists(pyperBinaryPath)}");
+            UDebug.Log($"[SpeechOutput] Awake | usePyper={usePyper} pyperExists={File.Exists(pyperBinaryPath)} forceEnglish={forceEnglish}");
         }
+
+        ApplyEnglishVoicesIfNeeded();
+    }
+
+    void ApplyEnglishVoicesIfNeeded()
+    {
+        if (!forceEnglish) return;
+
+        // macOS say: harte englische Stimme
+        if (!string.IsNullOrWhiteSpace(forcedMacEnglishVoice))
+            macSayVoice = forcedMacEnglishVoice;
+
+        // Pyper: wenn leer oder irgendwas anderes -> auf en setzen
+        if (string.IsNullOrWhiteSpace(pyperVoice))
+            pyperVoice = forcedPyperEnglishVoice;
     }
 
     public async Task<AudioClip> TextToSpeech(string text)
     {
         text = (text ?? "").Trim();
+
+        ApplyEnglishVoicesIfNeeded();
 
         if (debugLogs)
             UDebug.Log($"[SpeechOutput] TextToSpeech called | len={text.Length}");
@@ -84,11 +114,15 @@ public class SpeechOutput : MonoBehaviour
         string wavPath = Path.Combine(outDir, $"pyper_{DateTime.Now:HHmmssfff}.wav");
 
         // Minimal: pyper input -> wav output
-        // Je nach pyper build können args variieren. Das hier ist absichtlich konservativ:
-        // Wir pipen text via stdin und schreiben wav via -o.
         string args = $"-o \"{wavPath}\"";
-        if (!string.IsNullOrWhiteSpace(pyperVoice))
-            args = $"-v {pyperVoice} " + args;
+
+        // Erzwinge Voice (Englisch), wenn gewünscht
+        string voiceToUse = pyperVoice;
+        if (forceEnglish && !string.IsNullOrWhiteSpace(forcedPyperEnglishVoice))
+            voiceToUse = forcedPyperEnglishVoice;
+
+        if (!string.IsNullOrWhiteSpace(voiceToUse))
+            args = $"-v {voiceToUse} " + args;
 
         if (debugLogs) UDebug.Log($"[SpeechOutput] Pyper RUN: \"{pyperBinaryPath}\" {args}");
 
@@ -133,17 +167,20 @@ public class SpeechOutput : MonoBehaviour
 
     async Task<AudioClip> TryMacSay(string text)
     {
-        // say -v Anna -o out.aiff "text"
-        // dann: afconvert out.aiff out.wav (oder ffmpeg)
-        // Wir machen: say -> aiff, dann afconvert -> wav (afconvert ist auf macOS da)
+        // say -v Samantha -o out.aiff "text"
+        // dann: afconvert out.aiff out.wav
 
         string outDir = Path.Combine(Application.persistentDataPath, "tts");
         Directory.CreateDirectory(outDir);
 
         string aiffPath = Path.Combine(outDir, $"say_{DateTime.Now:HHmmssfff}.aiff");
-        string wavPath  = Path.Combine(outDir, $"say_{DateTime.Now:HHmmssfff}.wav");
+        string wavPath = Path.Combine(outDir, $"say_{DateTime.Now:HHmmssfff}.wav");
 
-        string sayArgs = $"-v \"{macSayVoice}\" -o \"{aiffPath}\" \"{EscapeQuotes(text)}\"";
+        string voiceToUse = macSayVoice;
+        if (forceEnglish && !string.IsNullOrWhiteSpace(forcedMacEnglishVoice))
+            voiceToUse = forcedMacEnglishVoice;
+
+        string sayArgs = $"-v \"{voiceToUse}\" -o \"{aiffPath}\" \"{EscapeQuotes(text)}\"";
 
         if (debugLogs) UDebug.Log($"[SpeechOutput] macOS say RUN: say {sayArgs}");
 
@@ -158,7 +195,6 @@ public class SpeechOutput : MonoBehaviour
             }
 
             // 2) afconvert aiff -> wav
-            // afconvert input -o output -f WAVE -d LEI16@44100
             string afArgs = $"\"{aiffPath}\" -o \"{wavPath}\" -f WAVE -d LEI16@{sampleRate}";
             if (debugLogs) UDebug.Log($"[SpeechOutput] afconvert RUN: afconvert {afArgs}");
 
@@ -195,7 +231,6 @@ public class SpeechOutput : MonoBehaviour
         using var proc = new System.Diagnostics.Process { StartInfo = psi };
         proc.Start();
 
-        // Optional: Logs lesen
         _ = await proc.StandardOutput.ReadToEndAsync();
         _ = await proc.StandardError.ReadToEndAsync();
 
@@ -221,8 +256,6 @@ public class SpeechOutput : MonoBehaviour
 
     static async Task<AudioClip> LoadWavAsClip(string wavPath, string clipName)
     {
-        // Unity kann WAV direkt als WWW/UnityWebRequest laden via file://
-        // Works on macOS.
         string url = "file://" + wavPath;
 
         using var req = UnityEngine.Networking.UnityWebRequestMultimedia.GetAudioClip(url, AudioType.WAV);
