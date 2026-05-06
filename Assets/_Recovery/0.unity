@@ -7360,41 +7360,6 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 0a7b52059dad045a890b44d59eed4c68, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::ProximityScreenFX
-  swapManager: {fileID: 0}
-  baseVolume: {fileID: 0}
-  proximityVolume: {fileID: 0}
-  baseFadeDuration: 0.12
-  blendSpeed: 8
-  intensityCurve:
-    m_Curve:
-    - time: 0
-      value: 0
-      inSlope: 0
-      outSlope: 0
-      tangentMode: 0
-      weightedMode: 0
-      inWeight: 0
-      outWeight: 0
-    - time: 1
-      value: 1
-      inSlope: 0
-      outSlope: 0
-      tangentMode: 0
-      weightedMode: 0
-      inWeight: 0
-      outWeight: 0
-    m_PreInfinity: 2
-    m_PostInfinity: 2
-    m_RotationOrder: 4
-  enablePulse: 1
-  pulseSpeed: 2.2
-  pulseAmount: 0.08
-  enableSwapPulse: 1
-  swapPulsePeak: 1
-  swapPulseDuration: 0.18
-  debugLogs: 0
-  _currentAuraWeight: 0
-  _swapPulseAdd: 0
 --- !u!114 &1651577799
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -10459,16 +10424,6 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: a67611697c8024486818153ba8e7fcb9, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::DialogueAgent
-  gateTtsLine: 'Say: How are you?'
-  gatePassphrase: how are you
-  gateSimilarityThreshold: 0.82
-  chatSystemPrompt: Du bist Player B. Antworte kurz, in Character.
-  voiceSource: {fileID: 0}
-  lipSync: {fileID: 0}
-  owner: {fileID: 0}
-  debugLogs: 1
-  deepDebug: 1
-  anomalyLogCooldown: 0.75
 --- !u!82 &6982812147933622158
 AudioSource:
   m_ObjectHideFlags: 0

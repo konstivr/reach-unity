@@ -3,6 +3,10 @@ using Cinemachine;
 using System;
 using System.Collections.Generic;
 
+#if ENABLE_INPUT_SYSTEM
+using UnityEngine.InputSystem;
+#endif
+
 public class PerspectiveSwapManager : MonoBehaviour
 {
     [Header("Cinemachine")]
@@ -18,7 +22,8 @@ public class PerspectiveSwapManager : MonoBehaviour
     public bool debugLogs = true;
 
     [Header("Legacy / FX")]
-    public float interactRadius = 2.5f; // nur für ProximityScreenFX/Visuals
+    [Tooltip("Legacy Radius for proximity FX scripts (e.g., ProximityScreenFX).")]
+    public float interactRadius = 2.5f;
 
     public event Action<PossessableCharacter, PossessableCharacter> Switched;
     public event Action<int, int, float> ProgressChanged;
@@ -26,6 +31,7 @@ public class PerspectiveSwapManager : MonoBehaviour
     readonly HashSet<PossessableCharacter> _visited = new HashSet<PossessableCharacter>();
     public int EnteredCount => _visited.Count;
 
+    // ✅ BACK: required by DialogueManager.cs
     public DialogueAgent CurrentAgent
     {
         get
@@ -54,12 +60,17 @@ public class PerspectiveSwapManager : MonoBehaviour
 
     void Start()
     {
+        // 1) ALLE deaktivieren
         foreach (var p in PossessableCharacter.ValidCharacters)
-            if (p != null && p.IsValid) p.SetControlled(false);
+        {
+            if (p != null && p.IsValid)
+                SetCharacterControlled(p, false, resetInput: true);
+        }
 
+        // 2) current aktivieren
         if (current != null && current.IsValid)
         {
-            current.SetControlled(true);
+            SetCharacterControlled(current, true, resetInput: true);
             ApplyCameraTarget(current);
 
             MarkVisited(current);
@@ -95,21 +106,73 @@ public class PerspectiveSwapManager : MonoBehaviour
 
         var prev = current;
 
-        prev.SetControlled(false);
-        next.SetControlled(true);
+        // 1) prev deaktivieren + input resetten
+        SetCharacterControlled(prev, false, resetInput: true);
 
+        // 2) current setzen
         current = next;
+
+        // 3) next aktivieren + input resetten
+        SetCharacterControlled(current, true, resetInput: true);
+
+        // 4) camera
         ApplyCameraTarget(current);
 
+        // 5) progress
         MarkVisited(current);
         FireProgressChanged();
 
+        // 6) notify listeners
         Switched?.Invoke(prev, current);
 
         if (debugLogs)
             Debug.Log($"[Swap] Switched '{prev.name}' -> '{current.name}' | visited={EnteredCount}/{maxPerspectives} progress={Progress01:0.00}");
 
         return true;
+    }
+
+    void SetCharacterControlled(PossessableCharacter p, bool controlled, bool resetInput)
+    {
+        if (p == null || !p.IsValid) return;
+
+        // A) eure Logik (NPCWander usw.)
+        p.SetControlled(controlled);
+
+#if ENABLE_INPUT_SYSTEM
+        // B) InputSystem: sauber aktiv/deaktiv
+        var pi = p.GetComponent<PlayerInput>();
+        if (pi != null)
+        {
+            if (controlled)
+            {
+                pi.enabled = true;
+                pi.ActivateInput();
+            }
+            else
+            {
+                pi.DeactivateInput();
+                pi.enabled = false;
+            }
+        }
+#endif
+
+        // C) Input reset
+        if (resetInput && p.inputs != null)
+        {
+            p.inputs.MoveInput(Vector2.zero);
+            p.inputs.LookInput(Vector2.zero);
+            p.inputs.JumpInput(false);
+            p.inputs.SprintInput(false);
+
+            p.inputs.dialogueConfirmHeld = false;
+            p.inputs.dialogueConfirmDown = false;
+            p.inputs.dialogueConfirmUp = false;
+
+            p.inputs.interact = false;
+            p.inputs.dialogueStart = false;
+            p.inputs.dialogueCancel = false;
+            p.inputs.menu = false;
+        }
     }
 
     void MarkVisited(PossessableCharacter p)

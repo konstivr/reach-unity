@@ -1,3 +1,4 @@
+using System;
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
@@ -8,8 +9,8 @@ public class LayeredMusicConductor : MonoBehaviour
 
     public enum QuantizeMode
     {
-        LoopBoundary, // neuer Layer startet exakt am nächsten Loop-Start
-        BPMGrid       // neuer Layer startet am nächsten Bar/Beat-Grid
+        LoopBoundary, // neuer Layer startet am nächsten Loop-Start des Base-Layers
+        BPMGrid       // neuer Layer startet am nächsten Bar-Grid (BPM muss stimmen)
     }
 
     [Header("References")]
@@ -31,43 +32,45 @@ public class LayeredMusicConductor : MonoBehaviour
     public int barsPerQuantize = 4;
 
     [Header("Loop / Sync")]
-    [Tooltip("Wenn true: alle Layer laufen als Loop.")]
     public bool loop = true;
-
-    [Tooltip("Startet Basis-Layer direkt beim Start (Layer 0).")]
     public bool startBaseLayerOnStart = true;
 
     [Header("Mix")]
     [Range(0f, 1f)] public float masterVolume = 1f;
 
-    [Tooltip("Fade-In-Zeit pro neuem Layer (sek).")]
-    public float layerFadeIn = 0.35f;
+    [Tooltip("Optional: Minimaler Fade-In für neue Layer.")]
+    public float layerFadeIn = 0f;
 
-    [Tooltip("Optional: beim Layer-Add ein kleines 'Click' vermeiden, indem wir minimal später starten (sek). 0.0 ist ok.")]
+    [Tooltip("Minimaler Safety-Offset beim schedulen (sek). 0.02 ist safe.")]
     public double safetyOffset = 0.02;
 
-    [Header("Ducking (Music gets quieter while speaking)")]
-    [Range(0f, 1f)] public float duckedMultiplier = 0.25f; // 25% der Musiklautstärke
-    public float duckFadeDownTime = 0.12f;
-    public float duckFadeUpTime = 0.25f;
+    [Header("Hard Sync (Phase-Lock)")]
+    [Tooltip("Wenn true: alle Layer werden permanent an den Base-Layer (Layer 0) phase-locked.\n" +
+             "Das verhindert Drift auch bei minimal unterschiedlichen Clip-Längen.")]
+    public bool hardSyncEnabled = true;
+
+    [Tooltip("Wie oft pro Sekunde prüfen wir Drift? 10-30 ist genug.")]
+    [Range(1, 60)]
+    public int resyncCheckHz = 20;
+
+    [Tooltip("Ab wie vielen Samples Drift wird resynct? 64-512 ist ein guter Range.\n" +
+             "Je niedriger, desto 'härter' gelockt.")]
+    public int resyncThresholdSamples = 128;
+
+    [Tooltip("Wenn Resync passiert: kurze Fade-Out/In Zeit gegen Clicks. 0 = kein Fade.")]
+    public float resyncFadeSeconds = 0.02f;
 
     [Header("Debug")]
     public bool debugLogs = true;
-    [Tooltip("Wenn true: loggt pro Frame den Duck-State (kann spammy sein).")]
-    public bool debugDuckingSpam = false;
 
     // intern
-    private readonly List<AudioSource> _activeSources = new();
-    private readonly Dictionary<AudioSource, float> _baseVolumes = new(); // 0..masterVolume
-    private int _nextLayerIndex = 0;
+    readonly List<AudioSource> _activeSources = new();
+    readonly Dictionary<AudioSource, float> _targetVolumes = new();
 
-    // Referenz-Startzeitpunkt (DSP)
-    private double _referenceStartDspTime = -1.0;
+    int _nextLayerIndex = 0;
+    double _referenceStartDspTime = -1.0;
 
-    // Ducking intern
-    private int _duckRequests = 0;
-    private float _duckFactor = 1f;      // current (smoothed)
-    private float _duckTarget = 1f;      // 1 = normal, duckedMultiplier = ducked
+    float _resyncTimer = 0f;
 
     void Awake()
     {
@@ -93,40 +96,44 @@ public class LayeredMusicConductor : MonoBehaviour
     void Start()
     {
         if (startBaseLayerOnStart)
-        {
-            AddNextLayerNowOrQuantized(reason: "Start");
-        }
+            AddNextLayerQuantized("Start");
     }
 
     void Update()
     {
-        // Duck smoothing
-        float t = (_duckTarget < _duckFactor) ? duckFadeDownTime : duckFadeUpTime;
-        t = Mathf.Max(0.001f, t);
-        _duckFactor = Mathf.MoveTowards(_duckFactor, _duckTarget, Time.deltaTime / t);
-
-        // Apply global duck factor to all active sources (multiplying their base-volume)
-        for (int i = 0; i < _activeSources.Count; i++)
+        // Layer Fade-In (optional)
+        if (layerFadeIn > 0f)
         {
-            var src = _activeSources[i];
-            if (!src) continue;
+            foreach (var kv in _targetVolumes)
+            {
+                var src = kv.Key;
+                if (!src) continue;
 
-            float baseVol = 0f;
-            _baseVolumes.TryGetValue(src, out baseVol);
-
-            src.volume = Mathf.Clamp01(baseVol * _duckFactor);
+                float target = kv.Value;
+                src.volume = Mathf.MoveTowards(src.volume, target, Time.deltaTime / Mathf.Max(0.001f, layerFadeIn));
+            }
         }
 
-        if (debugDuckingSpam && debugLogs)
-            Debug.Log($"[Music] Duck | req={_duckRequests} target={_duckTarget:0.00} factor={_duckFactor:0.00}");
+        // Hard Sync check (nicht jeden Frame nötig)
+        if (hardSyncEnabled && _activeSources.Count >= 2 && _activeSources[0] != null)
+        {
+            _resyncTimer += Time.deltaTime;
+            float interval = 1f / Mathf.Max(1, resyncCheckHz);
+
+            if (_resyncTimer >= interval)
+            {
+                _resyncTimer = 0f;
+                HardSyncToBase();
+            }
+        }
     }
 
     void OnSwitched(PossessableCharacter from, PossessableCharacter to)
     {
-        AddNextLayerNowOrQuantized(reason: $"Switch {from?.name} -> {to?.name}");
+        AddNextLayerQuantized($"Switch {from?.name} -> {to?.name}");
     }
 
-    void AddNextLayerNowOrQuantized(string reason)
+    void AddNextLayerQuantized(string reason)
     {
         if (layers == null || layers.Count == 0)
         {
@@ -141,6 +148,7 @@ public class LayeredMusicConductor : MonoBehaviour
         }
 
         var clip = layers[_nextLayerIndex];
+        int idx = _nextLayerIndex;
         _nextLayerIndex++;
 
         if (!clip)
@@ -149,65 +157,66 @@ public class LayeredMusicConductor : MonoBehaviour
             return;
         }
 
-        // Erstelle neue AudioSource pro Layer
+        // AudioSource pro Layer
         var src = gameObject.AddComponent<AudioSource>();
         src.playOnAwake = false;
         src.loop = loop;
         src.clip = clip;
-        src.volume = 0f;              // wird über baseVolumes + duckFactor gefahren
-        src.spatialBlend = 0f;         // 2D
-        src.outputAudioMixerGroup = null;
+        src.spatialBlend = 0f; // 2D
+        src.volume = (layerFadeIn > 0f) ? 0f : masterVolume;
 
-        // Referenzzeit setzen: wenn noch nix läuft, starten wir "jetzt quantized"
+        // Referenz setzen (Startpunkt des ganzen Layer-Systems)
         if (_referenceStartDspTime < 0.0)
-        {
             _referenceStartDspTime = AudioSettings.dspTime + safetyOffset;
-        }
 
-        // Startzeitpunkt bestimmen
         double startDsp = ComputeNextStartTime();
 
+        // Start immer am Loop-Start (Sample 0) – dann greift HardSync später als Safety-Net
+        try { src.timeSamples = 0; } catch { /* ignore */ }
+
         if (debugLogs)
-        {
-            Debug.Log($"[Music] Add Layer {_nextLayerIndex - 1}/{layers.Count - 1} '{clip.name}' | mode={quantizeMode} | startDsp={startDsp:0.000} | reason={reason}");
-        }
+            Debug.Log($"[Music] Add Layer {idx} '{clip.name}' | mode={quantizeMode} startDsp={startDsp:0.000} reason='{reason}'");
 
-        // base volume registrieren (wird gefadet)
-        _baseVolumes[src] = 0f;
-
-        // sample-genau schedulen
         src.PlayScheduled(startDsp);
 
         _activeSources.Add(src);
+        _targetVolumes[src] = masterVolume;
 
-        // Fade-in: wir ändern baseVol, Update() setzt daraus src.volume * duck
-        StartCoroutine(FadeInBaseVolumeRoutine(src, layerFadeIn, masterVolume));
+        if (layerFadeIn > 0f)
+            StartCoroutine(SnapTargetAfterSchedule(src, startDsp));
+    }
+
+    IEnumerator SnapTargetAfterSchedule(AudioSource src, double startDsp)
+    {
+        // wartet bis kurz nach Start, dann targetVolume sicher setzen (für fade)
+        while (AudioSettings.dspTime < startDsp + 0.01)
+            yield return null;
+
+        if (src) _targetVolumes[src] = masterVolume;
     }
 
     double ComputeNextStartTime()
     {
-        // Wenn noch keine Layer laufen: starte exakt an referenceStart
+        // wenn noch keine Source läuft -> referenceStart
         if (_activeSources.Count == 0)
-        {
             return _referenceStartDspTime;
-        }
 
-        // Wenn schon was läuft:
         if (quantizeMode == QuantizeMode.LoopBoundary)
         {
+            // Quantize auf nächste Loop-Startzeit des Base Layers (Layer 0)
             var baseClip = _activeSources[0].clip;
-            double loopDur = (double)baseClip.samples / baseClip.frequency;
+            double loopDur = ClipDurationSeconds(baseClip);
 
             double now = AudioSettings.dspTime + safetyOffset;
             double elapsed = now - _referenceStartDspTime;
             if (elapsed < 0) elapsed = 0;
 
-            double loops = System.Math.Ceiling(elapsed / loopDur);
-            double next = _referenceStartDspTime + loops * loopDur;
-            return next;
+            double loops = Math.Ceiling(elapsed / loopDur);
+            return _referenceStartDspTime + loops * loopDur;
         }
         else
         {
+            // Quantize auf Bar-Grid
             double beatDur = 60.0 / bpm;
             double barDur = beatsPerBar * beatDur;
             double quantum = barsPerQuantize * barDur;
@@ -216,62 +225,119 @@ public class LayeredMusicConductor : MonoBehaviour
             double elapsed = now - _referenceStartDspTime;
             if (elapsed < 0) elapsed = 0;
 
-            double quanta = System.Math.Ceiling(elapsed / quantum);
-            double next = _referenceStartDspTime + quanta * quantum;
-            return next;
+            double quanta = Math.Ceiling(elapsed / quantum);
+            return _referenceStartDspTime + quanta * quantum;
         }
     }
 
-    IEnumerator FadeInBaseVolumeRoutine(AudioSource src, float seconds, float targetBaseVol)
+    // =========================================================
+    // HARD SYNC (Phase Lock)
+    // =========================================================
+
+    void HardSyncToBase()
+    {
+        var baseSrc = _activeSources[0];
+        if (!baseSrc || !baseSrc.clip) return;
+        if (!baseSrc.isPlaying) return;
+
+        int baseTotal = baseSrc.clip.samples;
+        if (baseTotal <= 0) return;
+
+        // Phase 0..1 basierend auf Base timeSamples
+        int basePos = SafeTimeSamples(baseSrc);
+        double phase01 = (basePos % (double)baseTotal) / baseTotal;
+
+        for (int i = 1; i < _activeSources.Count; i++)
+        {
+            var src = _activeSources[i];
+            if (!src || !src.clip) continue;
+            if (!src.isPlaying) continue;
+
+            int total = src.clip.samples;
+            if (total <= 0) continue;
+
+            int desired = (int)Math.Round(phase01 * total) % total;
+            int current = SafeTimeSamples(src);
+
+            int delta = ShortestSampleDelta(current, desired, total);
+
+            if (Math.Abs(delta) >= resyncThresholdSamples)
+            {
+                if (debugLogs)
+                    Debug.Log($"[Music] RESYNC layer#{i} '{src.clip.name}' deltaSamples={delta} (thr={resyncThresholdSamples})");
+
+                if (resyncFadeSeconds > 0f)
+                    StartCoroutine(CoResyncWithFade(src, desired, resyncFadeSeconds));
+                else
+                    ForceSetTimeSamples(src, desired);
+            }
+        }
+    }
+
+    IEnumerator CoResyncWithFade(AudioSource src, int desiredSamples, float fadeSeconds)
     {
         if (!src) yield break;
 
-        targetBaseVol = Mathf.Clamp01(targetBaseVol);
+        float originalTarget = _targetVolumes.TryGetValue(src, out float tv) ? tv : masterVolume;
 
-        if (seconds <= 0f)
-        {
-            _baseVolumes[src] = targetBaseVol;
-            yield break;
-        }
-
+        // quick fade out
         float t = 0f;
-        while (t < seconds && src)
+        float startVol = src.volume;
+        while (t < fadeSeconds)
         {
             t += Time.deltaTime;
-            float a = Mathf.Clamp01(t / seconds);
-            _baseVolumes[src] = Mathf.Lerp(0f, targetBaseVol, a);
+            if (src) src.volume = Mathf.Lerp(startVol, 0f, t / fadeSeconds);
             yield return null;
         }
 
-        if (src) _baseVolumes[src] = targetBaseVol;
+        if (!src) yield break;
+
+        ForceSetTimeSamples(src, desiredSamples);
+
+        // fade back in to target
+        t = 0f;
+        while (t < fadeSeconds)
+        {
+            t += Time.deltaTime;
+            if (src) src.volume = Mathf.Lerp(0f, originalTarget, t / fadeSeconds);
+            yield return null;
+        }
+
+        if (src) src.volume = originalTarget;
     }
 
-    // -------------------------
-    // Ducking API (call from Dialogue/Speech)
-    // -------------------------
-    public void RequestDuck(string reason = "")
+    int SafeTimeSamples(AudioSource src)
     {
-        _duckRequests++;
-        _duckTarget = duckedMultiplier;
-
-        if (debugLogs)
-            Debug.Log($"[Music] Duck++ ({_duckRequests}) reason='{reason}' target={_duckTarget:0.00}");
+        try { return src.timeSamples; }
+        catch { return 0; }
     }
 
-    public void ReleaseDuck(string reason = "")
+    void ForceSetTimeSamples(AudioSource src, int samples)
     {
-        _duckRequests = Mathf.Max(0, _duckRequests - 1);
-
-        if (_duckRequests == 0)
-            _duckTarget = 1f;
-
-        if (debugLogs)
-            Debug.Log($"[Music] Duck-- ({_duckRequests}) reason='{reason}' target={_duckTarget:0.00}");
+        try { src.timeSamples = Mathf.Clamp(samples, 0, src.clip.samples - 1); }
+        catch { /* ignore */ }
     }
 
-    public bool IsDucked => _duckRequests > 0;
+    int ShortestSampleDelta(int current, int desired, int modulo)
+    {
+        // liefert Delta mit Wrap-Around, kleinster Weg
+        int raw = desired - current;
+        int half = modulo / 2;
 
-    // Optional: Reset / Restart (für Debug)
+        if (raw > half) raw -= modulo;
+        else if (raw < -half) raw += modulo;
+
+        return raw;
+    }
+
+    double ClipDurationSeconds(AudioClip clip)
+    {
+        if (!clip || clip.samples <= 0 || clip.frequency <= 0) return 0.0;
+        return (double)clip.samples / clip.frequency;
+    }
+
+    // =========================================================
+
     [ContextMenu("Reset Music Layers")]
     public void ResetLayers()
     {
@@ -281,15 +347,13 @@ public class LayeredMusicConductor : MonoBehaviour
         {
             if (s) Destroy(s);
         }
+
         _activeSources.Clear();
-        _baseVolumes.Clear();
+        _targetVolumes.Clear();
 
         _nextLayerIndex = 0;
         _referenceStartDspTime = -1.0;
-
-        _duckRequests = 0;
-        _duckTarget = 1f;
-        _duckFactor = 1f;
+        _resyncTimer = 0f;
 
         if (debugLogs) Debug.Log("[Music] Reset.");
     }

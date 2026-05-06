@@ -14,16 +14,18 @@ public class WorldTaskInteractable : MonoBehaviour
     public float interactRadius = 2.0f;
     public string hudPrompt = "Press Interact";
     public string lockedPrompt = "Not yet";
-    public bool hidePromptWhenFar = true;
 
     [Header("Audio")]
     public AudioSource audioSource;
     public AudioClip audioClip;
     public bool waitForAudioToFinish = true;
 
+    [Range(0f, 1f)]
+    public float defaultObjectVolume = 1.0f;
+
     [Header("On Complete")]
     public bool hideAfterComplete = true;
-    public GameObject[] hideTargets; // z.B. Objekt + Shadow
+    public GameObject[] hideTargets;
     public bool disableCollidersAfterComplete = true;
 
     [Header("Debug")]
@@ -35,93 +37,141 @@ public class WorldTaskInteractable : MonoBehaviour
     protected virtual void Awake()
     {
         if (!audioSource) audioSource = GetComponent<AudioSource>();
+
+        if (audioSource != null)
+        {
+            // ✅ Lauter Default
+            if (audioSource.volume < defaultObjectVolume)
+                audioSource.volume = defaultObjectVolume;
+
+            // Spatial defaults (falls vergessen)
+            if (audioSource.spatialBlend < 0.99f)
+                audioSource.spatialBlend = 1f;
+        }
+
         if (hideTargets == null || hideTargets.Length == 0)
             hideTargets = new GameObject[] { gameObject };
     }
 
-    protected virtual void Update()
+    protected virtual void Start()
     {
-        var swap = FindObjectOfType<PerspectiveSwapManager>();
-        if (!swap || !swap.current || !swap.current.inputs) return;
-
-        // nur in richtiger Perspektive
-        if (ownerCharacter != null && swap.current != ownerCharacter) return;
-
-        // schon done?
-        if (!_isCompleted && QuestStateManager.Instance != null && ownerCharacter != null)
+        if (QuestStateManager.Instance != null && ownerCharacter != null && !string.IsNullOrEmpty(taskId))
+        {
             _isCompleted = QuestStateManager.Instance.IsTaskDone(ownerCharacter, taskId);
-
-        if (_isCompleted) return;
-
-        float dist = Vector3.Distance(transform.position, swap.current.transform.position);
-
-        if (dist <= interactRadius)
-        {
-            if (HUDText.Instance != null && !HUDText.Instance.IsLockedByFX && !HUDText.Instance.IsSticky)
-                HUDText.Instance.SetPrompt(hudPrompt);
-
-            if (swap.current.inputs.interact && !_isRunning)
-            {
-                if (!PrerequisitesMet(ownerCharacter))
-                {
-                    if (HUDText.Instance != null && !HUDText.Instance.IsLockedByFX)
-                        HUDText.Instance.SetNpcTimed(lockedPrompt, 1.2f);
-                    return;
-                }
-
-                StartCoroutine(CoRunTask());
-            }
-        }
-        else
-        {
-            if (hidePromptWhenFar && HUDText.Instance != null && HUDText.Instance.CurrentMode == HUDText.Mode.Prompt)
-                HUDText.Instance.SetIdleAuto();
+            if (_isCompleted)
+                ApplyCompletedState();
         }
     }
 
-    protected bool PrerequisitesMet(PossessableCharacter c)
+    public bool IsCompleted => _isCompleted;
+    public bool IsBusy => _isRunning;
+
+    public bool IsInRange(PossessableCharacter current)
+    {
+        if (!current) return false;
+        float dist = Vector3.Distance(transform.position, current.transform.position);
+        return dist <= interactRadius;
+    }
+
+    public string GetPrompt()
+    {
+        if (_isCompleted) return "";
+        return hudPrompt;
+    }
+
+    public bool PrerequisitesMet()
     {
         if (QuestStateManager.Instance == null) return true;
+        if (ownerCharacter == null) return true;
         if (prerequisites == null) return true;
 
         for (int i = 0; i < prerequisites.Length; i++)
         {
             var id = prerequisites[i];
-            if (!string.IsNullOrEmpty(id) && !QuestStateManager.Instance.IsTaskDone(c, id))
+            if (!string.IsNullOrEmpty(id) && !QuestStateManager.Instance.IsTaskDone(ownerCharacter, id))
                 return false;
         }
         return true;
     }
 
-    IEnumerator CoRunTask()
+    public virtual bool TryInteract(PossessableCharacter current, HUDText hud)
+    {
+        if (_isCompleted || _isRunning) return false;
+        if (ownerCharacter != null && current != ownerCharacter) return false;
+        if (!IsInRange(current)) return false;
+
+        if (!PrerequisitesMet())
+        {
+            if (hud == null) hud = HUDText.Instance;
+            if (hud != null && !hud.IsLockedByFX)
+                hud.SetNpcTimed(lockedPrompt, 1.2f);
+
+            return true;
+        }
+
+        StartCoroutine(CoRunTask_Internal(hud));
+        return true;
+    }
+
+    IEnumerator CoRunTask_Internal(HUDText hud)
     {
         _isRunning = true;
 
         if (debugLogs) Debug.Log($"[Task] Start '{taskId}' on '{name}'");
 
-        // play audio
-        if (audioClip != null)
+        yield return RunTaskRoutine(hud);
+
+        _isRunning = false;
+
+        if (debugLogs) Debug.Log($"[Task] End '{taskId}' on '{name}'");
+    }
+
+    protected virtual IEnumerator RunTaskRoutine(HUDText hud)
+    {
+        yield return PlayAudioIfAny();
+        CompleteTaskAndApply(hud);
+    }
+
+    protected IEnumerator PlayAudioIfAny()
+    {
+        if (audioClip == null) yield break;
+
+        if (audioSource == null)
         {
-            if (audioSource == null)
-            {
-                audioSource = gameObject.AddComponent<AudioSource>();
-                audioSource.spatialBlend = 1f;
-            }
-
-            audioSource.clip = audioClip;
-            audioSource.Play();
-
-            if (waitForAudioToFinish)
-                yield return new WaitForSeconds(audioClip.length);
+            audioSource = gameObject.AddComponent<AudioSource>();
+            audioSource.spatialBlend = 1f;
+            audioSource.volume = defaultObjectVolume;
         }
 
-        // mark complete
-        if (QuestStateManager.Instance != null && ownerCharacter != null)
+        // ✅ enforce min volume
+        if (audioSource.volume < defaultObjectVolume)
+            audioSource.volume = defaultObjectVolume;
+
+        audioSource.clip = audioClip;
+        audioSource.Play();
+
+        if (waitForAudioToFinish)
+            yield return new WaitForSeconds(audioClip.length);
+    }
+
+    protected void CompleteTaskAndApply(HUDText hud)
+    {
+        if (_isCompleted) return;
+
+        if (QuestStateManager.Instance != null && ownerCharacter != null && !string.IsNullOrEmpty(taskId))
             QuestStateManager.Instance.CompleteTask(ownerCharacter, taskId);
 
         _isCompleted = true;
 
-        // hide stuff
+        ApplyCompletedState();
+
+        if (hud == null) hud = HUDText.Instance;
+        if (hud != null && !hud.IsLockedByFX && !hud.IsSticky)
+            hud.SetIdleAuto();
+    }
+
+    protected void ApplyCompletedState()
+    {
         if (hideAfterComplete && hideTargets != null)
         {
             for (int i = 0; i < hideTargets.Length; i++)
@@ -134,12 +184,5 @@ public class WorldTaskInteractable : MonoBehaviour
             for (int i = 0; i < cols.Length; i++)
                 cols[i].enabled = false;
         }
-
-        if (HUDText.Instance != null && !HUDText.Instance.IsLockedByFX && !HUDText.Instance.IsSticky)
-            HUDText.Instance.SetIdleAuto();
-
-        _isRunning = false;
-
-        if (debugLogs) Debug.Log($"[Task] Done '{taskId}'");
     }
 }

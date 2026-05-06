@@ -1,8 +1,5 @@
 // DialogueManager.cs
-// -> Vollständig, inkl. Hearts-Logik:
-//    - Default (EnteredCount <= 1): Hearts aus
-//    - Besessen (EnteredCount > 1): Hearts an + Reset bei Switch
-//    - Optional: MarkFreeTalkDone Hook -> kann 1 Herz füllen, wenn ihr wollt
+// HUD zeigt Ollama-Output SOLANGE gesprochen wird (AudioSource.isPlaying), nicht per Timeout.
 
 using System.Collections.Generic;
 using UnityEngine;
@@ -25,14 +22,14 @@ public class DialogueManager : MonoBehaviour
     [Header("Conversation")]
     public int maxHistoryMessages = 14;
 
-    [Header("HUD timing")]
-    public float chatNpcHoldSeconds = 6.0f;
-
     [Header("Debug")]
     public bool debugLogs = true;
 
     readonly List<OllamaClient.ChatMessage> _messages = new List<OllamaClient.ChatMessage>();
     DialogueAgent _currentPlayerAgent;
+
+    Coroutine _hudSpeakRoutine;
+    int _speakToken = 0; // cancels stale coroutines safely
 
     void Awake()
     {
@@ -67,7 +64,6 @@ public class DialogueManager : MonoBehaviour
         if (hud != null)
             hud.SetIdleAuto();
 
-        // Default-Perspektive: Hearts aus
         ApplyHeartsVisibilityAndResetIfNeeded(reset: false);
     }
 
@@ -75,22 +71,19 @@ public class DialogueManager : MonoBehaviour
     {
         if (debugLogs) Debug.Log($"[DialogueManager] OnSwitched {from?.name} -> {to?.name} | reset chat history");
 
-        InterruptDialogue();
-        RefreshCurrentPlayerAgent(resetHistory: true);
+        InterruptDialogue();                 // stops speaking + cancels HUD lock
+        RefreshCurrentPlayerAgent(true);
         state = DialogueState.Listening;
 
         if (hud != null)
             hud.SetIdlePerspective();
 
-        // Bei jeder neuen Perspektive: Hearts reset (aber nur wenn besessen)
         ApplyHeartsVisibilityAndResetIfNeeded(reset: true);
     }
 
     void ApplyHeartsVisibilityAndResetIfNeeded(bool reset)
     {
-        // Default ist: EnteredCount <= 1 (Start-Char). Dort keine Hearts anzeigen.
         bool isDefaultPerspective = (swapManager == null) || (swapManager.EnteredCount <= 1);
-
         if (HUDHearts.Instance == null) return;
 
         if (isDefaultPerspective)
@@ -99,9 +92,8 @@ public class DialogueManager : MonoBehaviour
             return;
         }
 
-        // besessen: anzeigen
         if (reset) HUDHearts.Instance.ResetHeartsAndShow();
-        else HUDHearts.Instance.ResetHeartsAndShow(); // beim Start in besessen (falls Start nicht default ist)
+        else HUDHearts.Instance.ResetHeartsAndShow();
     }
 
     void RefreshCurrentPlayerAgent(bool resetHistory)
@@ -130,7 +122,18 @@ public class DialogueManager : MonoBehaviour
 
     public void InterruptDialogue()
     {
+        // cancel HUD coroutine + unlock HUD
+        _speakToken++;
+        if (_hudSpeakRoutine != null)
+        {
+            StopCoroutine(_hudSpeakRoutine);
+            _hudSpeakRoutine = null;
+        }
+
+        if (hud != null) hud.ClearFXOverride();
+
         if (_currentPlayerAgent) _currentPlayerAgent.StopSpeaking();
+
         state = DialogueState.Interrupted;
         if (debugLogs) Debug.Log("[DialogueManager] InterruptDialogue -> state=Interrupted");
     }
@@ -139,6 +142,13 @@ public class DialogueManager : MonoBehaviour
     {
         if (ReachTransitionFX.Instance != null && ReachTransitionFX.Instance.IsTransitioning)
             return;
+
+        // ✅ Nur nach Perspektiv-Switch chatten
+        if (swapManager == null || swapManager.EnteredCount <= 1)
+        {
+            if (debugLogs) Debug.Log("[DialogueManager] Ignored chat: still in default perspective (EnteredCount <= 1).");
+            return;
+        }
 
         if (gate != null && gate.ShouldBlockChat())
         {
@@ -175,23 +185,91 @@ public class DialogueManager : MonoBehaviour
         _messages.Add(new OllamaClient.ChatMessage { role = "assistant", content = npcText });
         TrimHistory();
 
+        // ✅ HUD: fixen Text locken (Router darf nicht drüber)
         if (hud != null)
-            hud.SetNpcTimed(npcText, chatNpcHoldSeconds);
+            hud.SetFXOverride(npcText);
 
         AudioClip clip = await speechOutput.TextToSpeech(npcText);
+
+        // Speak
         _currentPlayerAgent.Speak(clip);
 
-        // OPTIONAL: Wenn ihr "freier Talk" als 3. Herz zählen wollt:
-        // -> Füllt 1 Herz, sobald einmal ein echter Chat durchgelaufen ist.
-        // -> Entfernen, wenn ihr das lieber über Quest-Logic macht.
-        if (swapManager != null && swapManager.EnteredCount > 1 && HUDHearts.Instance != null)
+        // ✅ halte HUD bis Audio wirklich fertig ist
+        StartHoldHudWhileSpeaking(_currentPlayerAgent, clip);
+
+        // OPTIONAL hearts
+        if (HUDHearts.Instance != null)
         {
-            // nur wenn noch nicht voll (damit es nicht dauernd weiterzählt)
             if (HUDHearts.Instance.GetFilled() < 3)
                 HUDHearts.Instance.Advance();
         }
 
         state = DialogueState.Listening;
+    }
+
+    void StartHoldHudWhileSpeaking(DialogueAgent agent, AudioClip expectedClip)
+    {
+        _speakToken++;
+        int token = _speakToken;
+
+        if (_hudSpeakRoutine != null)
+        {
+            StopCoroutine(_hudSpeakRoutine);
+            _hudSpeakRoutine = null;
+        }
+
+        _hudSpeakRoutine = StartCoroutine(CoHoldHudWhileSpeaking(agent, expectedClip, token));
+    }
+
+    AudioSource TryGetAgentAudioSource(DialogueAgent agent)
+    {
+        if (agent == null) return null;
+
+        // Robust: falls voiceSource nicht public ist, vermeiden wir compile errors.
+        // Nimm die AudioSource, die der Agent zum Sprechen nutzt (meistens am Agent oder Child).
+        var src = agent.GetComponent<AudioSource>();
+        if (src != null) return src;
+
+        return agent.GetComponentInChildren<AudioSource>();
+    }
+
+    System.Collections.IEnumerator CoHoldHudWhileSpeaking(DialogueAgent agent, AudioClip expectedClip, int token)
+    {
+        if (hud == null)
+            yield break;
+
+        // 1 Frame warten, damit Speak() die Source/Clip gesetzt hat
+        yield return null;
+
+        if (token != _speakToken) yield break;
+
+        AudioSource src = TryGetAgentAudioSource(agent);
+
+        // Fallback: wenn keine Source -> warte clip.length
+        if (src == null)
+        {
+            if (expectedClip != null)
+                yield return new WaitForSeconds(Mathf.Max(0.05f, expectedClip.length));
+
+            if (token == _speakToken) hud.ClearFXOverride();
+            yield break;
+        }
+
+        while (token == _speakToken)
+        {
+            bool playing = src.isPlaying;
+
+            // Wenn ein expectedClip gegeben ist, checke ob Source noch denselben Clip spielt.
+            bool sameClip = (expectedClip == null) ? true : (src.clip == expectedClip);
+
+            if (!playing || !sameClip)
+                break;
+
+            yield return null;
+        }
+
+        if (token == _speakToken)
+            hud.ClearFXOverride();
     }
 
     void TrimHistory()

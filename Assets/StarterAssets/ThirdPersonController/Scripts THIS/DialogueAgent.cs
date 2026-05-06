@@ -6,7 +6,7 @@ public class DialogueAgent : MonoBehaviour
 {
     [Header("Gate (before possess)")]
     [TextArea(3, 8)]
-    public string gateTtsLine = "Sag: How are you?";
+    public string gateTtsLine = "Say: How are you?";
 
     public string gatePassphrase = "how are you";
 
@@ -78,12 +78,16 @@ public class DialogueAgent : MonoBehaviour
         _prevClip = voiceSource ? voiceSource.clip : null;
         _prevIsPlaying = voiceSource ? voiceSource.isPlaying : false;
         _prevLoop = voiceSource ? voiceSource.loop : false;
-        _prevTime = voiceSource ? voiceSource.time : 0f;
+        _prevTime = 0f; // wichtig: NICHT voiceSource.time lesen, falls clip null
     }
 
     void Update()
     {
         if (!debugLogs || !voiceSource) return;
+
+        // 0) Wenn kein Clip anliegt, dürfen wir voiceSource.time NICHT anfassen,
+        // sonst kommt die Unity-Warnung ("resource that is not a clip").
+        bool hasClip = (voiceSource.clip != null);
 
         // 1) Track modifications to loop flag
         if (voiceSource.loop != _prevLoop)
@@ -95,7 +99,7 @@ public class DialogueAgent : MonoBehaviour
             _prevLoop = voiceSource.loop;
         }
 
-        // 2) Track clip changes while playing (ohne Speak())
+        // 2) Track clip changes
         if (voiceSource.clip != _prevClip)
         {
             Debug.LogWarning(
@@ -107,15 +111,14 @@ public class DialogueAgent : MonoBehaviour
         }
 
         // 3) Detect time “jump backwards” while still playing (restart/loop)
-        if (deepDebug && voiceSource.isPlaying && _prevIsPlaying && voiceSource.clip != null)
+        // Nur wenn wir wirklich einen Clip haben!
+        if (deepDebug && hasClip && voiceSource.isPlaying && _prevIsPlaying)
         {
-            float cur = voiceSource.time;
+            float cur = voiceSource.time;  // SAFE: clip != null
             float prev = _prevTime;
 
-            // wenn time deutlich rückwärts springt (und nicht nur minimal durch floating errors)
             if (cur + 0.02f < prev)
             {
-                // throttle logs
                 if (Time.time - _lastAnomalyLogTime > anomalyLogCooldown)
                 {
                     _lastAnomalyLogTime = Time.time;
@@ -124,7 +127,7 @@ public class DialogueAgent : MonoBehaviour
                         $"[DialogueAgent] TIME RESET DETECTED on '{name}' | clip={voiceSource.clip.name} " +
                         $"prevTime={prev:0.00} -> curTime={cur:0.00} / len={voiceSource.clip.length:0.00} " +
                         $"loop={voiceSource.loop} frame={Time.frameCount}\n" +
-                        $"This usually means: LOOP enabled somewhere OR the clip gets restarted externally OR another AudioSource plays the same clip."
+                        $"This usually means: LOOP enabled OR clip restarted externally OR another AudioSource plays the same clip."
                     );
 
                     LogWhoPlaysSameClip(voiceSource.clip);
@@ -135,13 +138,14 @@ public class DialogueAgent : MonoBehaviour
         }
         else
         {
-            _prevTime = voiceSource.time;
+            // wenn kein Clip: wir halten _prevTime einfach auf 0
+            _prevTime = hasClip ? voiceSource.time : 0f;
         }
 
         _prevIsPlaying = voiceSource.isPlaying;
 
-        // 4) Lightweight periodic status
-        if (Time.frameCount % 120 == 0 && voiceSource.isPlaying && voiceSource.clip != null)
+        // 4) Lightweight periodic status (nur mit Clip)
+        if (hasClip && Time.frameCount % 120 == 0 && voiceSource.isPlaying)
         {
             Debug.Log(
                 $"[DialogueAgent] Playing '{name}' | clip={voiceSource.clip.name} " +
@@ -174,7 +178,6 @@ public class DialogueAgent : MonoBehaviour
                 $"len={clip.length:0.00}s samples={clipSamples} freq={clip.frequency} ch={clip.channels}"
             );
 
-            // 🔥 StackTrace, wenn Speak zu schnell re-triggered (hilft sofort, wer es spammt)
             if (_lastClipName == clipName && _lastClipSamples == clipSamples && dt < 0.6)
             {
                 Debug.LogWarning(
@@ -205,7 +208,7 @@ public class DialogueAgent : MonoBehaviour
         _prevClip = voiceSource.clip;
         _prevIsPlaying = voiceSource.isPlaying;
         _prevLoop = voiceSource.loop;
-        _prevTime = voiceSource.time;
+        _prevTime = 0f; // nicht direkt voiceSource.time lesen (safe)
     }
 
     public void StopSpeaking()
@@ -224,7 +227,7 @@ public class DialogueAgent : MonoBehaviour
     }
 
     // ============================================================
-    // Detect "who plays the same clip" (find One shot audio objects)
+    // Detect "who plays the same clip"
     // ============================================================
     void LogWhoPlaysSameClip(AudioClip clip)
     {
@@ -241,23 +244,21 @@ public class DialogueAgent : MonoBehaviour
             var a = all[i];
             if (!a) continue;
 
-            // match if assigned clip equals, OR if currently playing and clip matches
             if (a.clip == clip)
             {
                 matches++;
                 sb.AppendLine(
                     $"- src='{a.name}' go='{a.gameObject.name}' active={a.gameObject.activeInHierarchy} " +
-                    $"isPlaying={a.isPlaying} loop={a.loop} time={a.time:0.00} " +
+                    $"isPlaying={a.isPlaying} loop={a.loop} " +
                     $"spatialBlend={a.spatialBlend:0.00} vol={a.volume:0.00}"
                 );
             }
 
-            // besonders hilfreich: One shot audio Objects (Unity name patterns)
             if (a.gameObject.name.ToLower().Contains("one shot"))
             {
                 sb.AppendLine(
                     $"! OneShotCandidate: src='{a.name}' go='{a.gameObject.name}' isPlaying={a.isPlaying} " +
-                    $"clip={(a.clip ? a.clip.name : "null")} loop={a.loop} time={a.time:0.00}"
+                    $"clip={(a.clip ? a.clip.name : "null")} loop={a.loop}"
                 );
             }
         }

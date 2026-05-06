@@ -34,6 +34,14 @@ public class NPCWander : MonoBehaviour
     public float obstacleCheckDistance = 1.2f;
     public LayerMask obstacleLayers = ~0;
 
+    [Header("Stability")]
+    [Tooltip("Wenn der NPC zu oft 'klebt', wird nach dieser Zeit eine neue Richtung gewählt.")]
+    public float repickDirectionEverySeconds = 1.2f;
+
+    [Tooltip("Minimale Input-Magnitude, unter der wir gar nicht bewegen (gegen micro jitter).")]
+    [Range(0f, 0.3f)]
+    public float inputDeadzone = 0.05f;
+
     [Header("Debug")]
     public bool debugLogs = false;
 
@@ -42,7 +50,7 @@ public class NPCWander : MonoBehaviour
     private float _timer;
 
     private Vector3 _worldDir;
-    private Camera _mainCam;
+    private float _repickTimer;
 
     private float _origMoveSpeed;
     private float _origSprintSpeed;
@@ -52,8 +60,6 @@ public class NPCWander : MonoBehaviour
     {
         if (!inputs) inputs = GetComponent<StarterAssetsInputs>();
         if (!thirdPersonController) thirdPersonController = GetComponent<ThirdPersonController>();
-
-        _mainCam = Camera.main;
 
         if (thirdPersonController && !_cachedSpeeds)
         {
@@ -68,12 +74,17 @@ public class NPCWander : MonoBehaviour
         if (inputs)
             inputs.analogMovement = true;
 
+        // ✅ CRITICAL FIX:
+        // NPCs dürfen NICHT die "Move -> CameraTargetYaw" Logik ausführen, sonst entsteht Feedback-Loop => Kreis drehen.
+        if (thirdPersonController)
+            thirdPersonController.UseMoveToDriveCameraYaw = false;
+
         if (!doNotTouchSpeeds)
             ApplyAISpeed(true);
 
         EnterIdle();
 
-        if (debugLogs) Debug.Log($"[NPCWander] Enabled on '{name}' doNotTouchSpeeds={doNotTouchSpeeds}");
+        if (debugLogs) Debug.Log($"[NPCWander] Enabled on '{name}'");
     }
 
     private void OnDisable()
@@ -89,13 +100,17 @@ public class NPCWander : MonoBehaviour
         if (!doNotTouchSpeeds)
             ApplyAISpeed(false);
 
+        // Optional: falls dieser NPC später wieder possesst wird,
+        // kann eure Possess-Logik das wieder TRUE setzen.
+        // (Hier NICHT erzwingen, sonst schießt ihr euch beim Enable/Disable von NPCs ins Knie.)
+        // if (thirdPersonController) thirdPersonController.UseMoveToDriveCameraYaw = true;
+
         if (debugLogs) Debug.Log($"[NPCWander] Disabled on '{name}'");
     }
 
     private void Update()
     {
         if (!inputs) return;
-        if (_mainCam == null) _mainCam = Camera.main;
 
         _timer -= Time.deltaTime;
 
@@ -111,14 +126,28 @@ public class NPCWander : MonoBehaviour
         }
         else // Walk
         {
+            _repickTimer -= Time.deltaTime;
+
             if (avoidObstacles && IsBlocked(_worldDir))
             {
                 if (debugLogs) Debug.Log($"[NPCWander] '{name}' blocked -> new direction");
                 PickNewDirection();
             }
+            else if (_repickTimer <= 0f)
+            {
+                // Sanfter refresh, verhindert langes "an einer Stelle drehen"
+                PickNewDirection();
+            }
 
-            Vector2 move = WorldDirToInput(_worldDir, walkInputMagnitude);
+            Vector2 move = WorldDirToInput_Local(transform, _worldDir, walkInputMagnitude);
+
+            // deadzone gegen micro jitter
+            if (move.sqrMagnitude < inputDeadzone * inputDeadzone)
+                move = Vector2.zero;
+
             inputs.MoveInput(move);
+
+            // NPCs nutzen keinen Look
             inputs.LookInput(Vector2.zero);
             inputs.SprintInput(false);
             inputs.JumpInput(false);
@@ -160,6 +189,8 @@ public class NPCWander : MonoBehaviour
         _worldDir = Quaternion.Euler(0f, yaw, 0f) * Vector3.forward;
         _worldDir.y = 0f;
         _worldDir.Normalize();
+
+        _repickTimer = Mathf.Max(0.1f, repickDirectionEverySeconds);
     }
 
     private bool IsBlocked(Vector3 dir)
@@ -168,15 +199,20 @@ public class NPCWander : MonoBehaviour
         return Physics.Raycast(origin, dir, obstacleCheckDistance, obstacleLayers, QueryTriggerInteraction.Ignore);
     }
 
-    private Vector2 WorldDirToInput(Vector3 worldDir, float magnitude)
+    /// <summary>
+    /// ✅ Stabil: Welt-Richtung -> NPC Local Input (unabhängig von MainCamera).
+    /// Das verhindert Camera-Yaw Feedback-Loops komplett.
+    /// </summary>
+    private static Vector2 WorldDirToInput_Local(Transform npc, Vector3 worldDir, float magnitude)
     {
-        float camYaw = (_mainCam != null) ? _mainCam.transform.eulerAngles.y : 0f;
-        float desiredYaw = Mathf.Atan2(worldDir.x, worldDir.z) * Mathf.Rad2Deg;
+        Vector3 local = npc.InverseTransformDirection(worldDir);
+        Vector2 v = new Vector2(local.x, local.z);
 
-        float localYaw = Mathf.DeltaAngle(camYaw, desiredYaw);
-        float rad = localYaw * Mathf.Deg2Rad;
+        float mag = v.magnitude;
+        if (mag > 1e-5f)
+            v /= mag;
 
-        return new Vector2(Mathf.Sin(rad), Mathf.Cos(rad)) * Mathf.Clamp01(magnitude);
+        return v * Mathf.Clamp01(magnitude);
     }
 
     private void ApplyAISpeed(bool aiActive)

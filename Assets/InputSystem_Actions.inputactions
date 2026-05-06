@@ -102,22 +102,13 @@
                     "id": "6391b0a2-4dc4-49f8-b5f2-301d668cacc2",
                     "expectedControlType": "",
                     "processors": "",
-                    "interactions": "Press(behavior=2)",
+                    "interactions": "",
                     "initialStateCheck": true
                 },
                 {
                     "name": "Move",
                     "type": "Value",
                     "id": "d52835d7-7696-41a5-a030-b2b6c0e50335",
-                    "expectedControlType": "Vector2",
-                    "processors": "",
-                    "interactions": "",
-                    "initialStateCheck": true
-                },
-                {
-                    "name": "Look",
-                    "type": "Value",
-                    "id": "422fa030-0b73-4f10-8e93-6ffe7bb996b9",
                     "expectedControlType": "Vector2",
                     "processors": "",
                     "interactions": "",
@@ -291,61 +282,6 @@
                     "isPartOfComposite": false
                 },
                 {
-                    "name": "Joystick",
-                    "id": "7d8a5fa4-4927-454e-a450-afbf5473c5f5",
-                    "path": "2DVector",
-                    "interactions": "",
-                    "processors": "",
-                    "groups": "",
-                    "action": "Navigate",
-                    "isComposite": true,
-                    "isPartOfComposite": false
-                },
-                {
-                    "name": "up",
-                    "id": "e4508a24-56c2-47a7-9fbb-e55ca53c9344",
-                    "path": "<Joystick>/stick/up",
-                    "interactions": "",
-                    "processors": "",
-                    "groups": "Joystick",
-                    "action": "Navigate",
-                    "isComposite": false,
-                    "isPartOfComposite": true
-                },
-                {
-                    "name": "down",
-                    "id": "70cb6ebd-9a30-453d-b807-b6de5b8f9a53",
-                    "path": "<Joystick>/stick/down",
-                    "interactions": "",
-                    "processors": "",
-                    "groups": "Joystick",
-                    "action": "Navigate",
-                    "isComposite": false,
-                    "isPartOfComposite": true
-                },
-                {
-                    "name": "left",
-                    "id": "fc05df15-3215-4912-b7b1-0ba064d14a64",
-                    "path": "<Joystick>/stick/left",
-                    "interactions": "",
-                    "processors": "",
-                    "groups": "Joystick",
-                    "action": "Navigate",
-                    "isComposite": false,
-                    "isPartOfComposite": true
-                },
-                {
-                    "name": "right",
-                    "id": "aaf5719b-b791-438a-abc0-c9cebffe663f",
-                    "path": "<Joystick>/stick/right",
-                    "interactions": "",
-                    "processors": "",
-                    "groups": "Joystick",
-                    "action": "Navigate",
-                    "isComposite": false,
-                    "isPartOfComposite": true
-                },
-                {
                     "name": "Keyboard",
                     "id": "4dc63d98-1bd9-4154-9a1d-7a71eae14d74",
                     "path": "2DVector",
@@ -446,17 +382,6 @@
                 },
                 {
                     "name": "",
-                    "id": "31b0fc41-64cc-4c69-bbe3-87bf873a713d",
-                    "path": "<Keyboard>/f",
-                    "interactions": "",
-                    "processors": "",
-                    "groups": ";Keyboard&Mouse",
-                    "action": "DialogueStart",
-                    "isComposite": false,
-                    "isPartOfComposite": false
-                },
-                {
-                    "name": "",
                     "id": "6622ea81-4ef1-41e9-b06a-39083a1e1fe2",
                     "path": "<Keyboard>/s",
                     "interactions": "",
@@ -480,6 +405,17 @@
                 {
                     "name": "",
                     "id": "d91d63b0-3cf7-4b39-bace-fa385635eb5c",
+                    "path": "<Joystick>/trigger",
+                    "interactions": "",
+                    "processors": "",
+                    "groups": ";Joystick",
+                    "action": "DialogueConfirm",
+                    "isComposite": false,
+                    "isPartOfComposite": false
+                },
+                {
+                    "name": "",
+                    "id": "8ca9e185-00f9-409b-bfdb-bf008f739a31",
                     "path": "<Keyboard>/enter",
                     "interactions": "",
                     "processors": "",
@@ -622,39 +558,6 @@
                 },
                 {
                     "name": "",
-                    "id": "a2adb61b-6ad9-4645-951f-f8a4d52e16e2",
-                    "path": "<Gamepad>/rightStick",
-                    "interactions": "",
-                    "processors": "",
-                    "groups": ";Gamepad",
-                    "action": "Look",
-                    "isComposite": false,
-                    "isPartOfComposite": false
-                },
-                {
-                    "name": "",
-                    "id": "4221de3e-78e0-4d28-81e1-7130a1adc646",
-                    "path": "<Pointer>/delta",
-                    "interactions": "",
-                    "processors": "",
-                    "groups": ";Keyboard&Mouse;Touch",
-                    "action": "Look",
-                    "isComposite": false,
-                    "isPartOfComposite": false
-                },
-                {
-                    "name": "",
-                    "id": "c703b5c5-8327-4a74-bf76-fdb1e3c5fc1d",
-                    "path": "<Joystick>/{Hatswitch}",
-                    "interactions": "",
-                    "processors": "",
-                    "groups": "Joystick",
-                    "action": "Look",
-                    "isComposite": false,
-                    "isPartOfComposite": false
-                },
-                {
-                    "name": "",
                     "id": "eb40bb66-4559-4dfa-9a2f-820438abb426",
                     "path": "<Keyboard>/space",
                     "interactions": "",
@@ -711,10 +614,21 @@
                 {
                     "name": "",
                     "id": "1c04ea5f-b012-41d1-a6f7-02e963b52893",
-                    "path": "<Keyboard>/e",
+                    "path": "<Keyboard>/f",
                     "interactions": "",
                     "processors": "",
                     "groups": "Keyboard&Mouse",
+                    "action": "Interact",
+                    "isComposite": false,
+                    "isPartOfComposite": false
+                },
+                {
+                    "name": "",
+                    "id": "e333749e-7bba-4e3d-bc66-447c7e6d7ebf",
+                    "path": "<HID::SPEEDLINK COMPETITION PRO Game Controller for Android >/button4",
+                    "interactions": "",
+                    "processors": "",
+                    "groups": ";Joystick",
                     "action": "Interact",
                     "isComposite": false,
                     "isPartOfComposite": false
@@ -1036,6 +950,76 @@
                     "processors": "",
                     "groups": "Keyboard&Mouse;Gamepad;Touch;Joystick;XR",
                     "action": "Cancel",
+                    "isComposite": false,
+                    "isPartOfComposite": false
+                }
+            ]
+        },
+        {
+            "name": "Global",
+            "id": "5b09c11c-9545-4752-90c4-d0cbd31cfb59",
+            "actions": [
+                {
+                    "name": "Pause",
+                    "type": "Button",
+                    "id": "4f071011-5a1f-4329-b465-9aa0506bdefb",
+                    "expectedControlType": "",
+                    "processors": "",
+                    "interactions": "",
+                    "initialStateCheck": false
+                },
+                {
+                    "name": "Reset",
+                    "type": "Button",
+                    "id": "3cf8dca5-cb60-44fa-89b8-1b1a78d0360b",
+                    "expectedControlType": "",
+                    "processors": "",
+                    "interactions": "",
+                    "initialStateCheck": false
+                }
+            ],
+            "bindings": [
+                {
+                    "name": "",
+                    "id": "202f7b37-d3f8-403e-867c-cf1f036ecb44",
+                    "path": "<Keyboard>/m",
+                    "interactions": "",
+                    "processors": "",
+                    "groups": ";Keyboard&Mouse",
+                    "action": "Pause",
+                    "isComposite": false,
+                    "isPartOfComposite": false
+                },
+                {
+                    "name": "",
+                    "id": "154a9ffd-1184-419c-b77a-06ffc3b046d1",
+                    "path": "<HID::SPEEDLINK COMPETITION PRO Game Controller for Android >/button5",
+                    "interactions": "",
+                    "processors": "",
+                    "groups": "",
+                    "action": "Pause",
+                    "isComposite": false,
+                    "isPartOfComposite": false
+                },
+                {
+                    "name": "",
+                    "id": "5de7ced1-4c04-4c51-91f7-120773f27207",
+                    "path": "<Keyboard>/p",
+                    "interactions": "",
+                    "processors": "",
+                    "groups": ";Keyboard&Mouse",
+                    "action": "Reset",
+                    "isComposite": false,
+                    "isPartOfComposite": false
+                },
+                {
+                    "name": "",
+                    "id": "1f81fe10-c432-47aa-ac06-9886eae3192c",
+                    "path": "<HID::SPEEDLINK COMPETITION PRO Game Controller for Android >/button2",
+                    "interactions": "",
+                    "processors": "",
+                    "groups": "",
+                    "action": "Reset",
                     "isComposite": false,
                     "isPartOfComposite": false
                 }

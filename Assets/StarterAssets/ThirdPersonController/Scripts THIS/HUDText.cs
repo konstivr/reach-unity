@@ -1,3 +1,12 @@
+// HUDText.cs (DROP-IN REPLACE)
+// Improvements for "no fighting":
+// ✅ Clear and explicit modes + lock flags.
+// ✅ IsTimedLocked is true while timed routine exists (already).
+// ✅ ClearSticky() returns to IdleAuto (Router owns what IdleAuto becomes via ResolveIdleText).
+// ✅ ForceResetToIdle does not keep old sticky/timed/intro.
+// ✅ CoTimedReturn sets _timedRoutine=null AFTER the idle restoration (so IsTimedLocked is accurate).
+// ✅ Router can safely check: !IsLockedByFX && !IsSticky && !IsTimedLocked && !IsIntroRunning
+
 using UnityEngine;
 using System.Collections;
 using TMPro;
@@ -13,10 +22,8 @@ public class HUDText : MonoBehaviour
     public PerspectiveSwapManager swapManager;
 
     [Header("Intro Sequence (3 texts)")]
-    [Tooltip("Wenn true: Zeigt zu Beginn nacheinander Intro-Texte und wird danach leer.")]
     public bool playIntroOnStart = true;
 
-    [Tooltip("Jeder Eintrag wird introSeconds lang angezeigt.")]
     [TextArea(1, 3)]
     public string[] introTexts = new string[]
     {
@@ -49,10 +56,8 @@ public class HUDText : MonoBehaviour
 
     Mode _mode = Mode.IdleAuto;
 
-    // timed prompts
     Coroutine _timedRoutine;
 
-    // intro
     Coroutine _introRoutine;
     bool _introRunning = false;
     bool _introFinished = false;
@@ -72,9 +77,11 @@ public class HUDText : MonoBehaviour
     }
 
     public Mode CurrentMode => _mode;
+
     public bool IsLockedByFX => _mode == Mode.FXOverride;
     public bool IsSticky => _mode == Mode.StickyUntilReset;
     public bool IsIntroRunning => _introRunning;
+    public bool IsTimedLocked => _timedRoutine != null;
 
     // =========================================================
     // Public API
@@ -100,14 +107,12 @@ public class HUDText : MonoBehaviour
 
     public void SetIdleAuto()
     {
-        // während Intro: nicht überschreiben lassen
         if (_introRunning) return;
 
         _mode = Mode.IdleAuto;
         StopTimed();
 
-        // Nach Intro wollen wir erstmal LEER bleiben, bis Proximity/Gate was setzt
-        // (für den Startzustand; nach Switch nutzt ihr SetIdlePerspective() für "Talk to me")
+        // After intro: leave empty until something else sets a prompt (e.g., router proximity)
         if (_introFinished && swapManager != null && swapManager.EnteredCount <= 1)
         {
             ClearText();
@@ -165,11 +170,6 @@ public class HUDText : MonoBehaviour
             SetIdleAuto();
     }
 
-    /// <summary>
-    /// Kompatibilität: DialogueManager erwartet diese Methode.
-    /// Zeigt den Text für X Sekunden und geht dann zurück auf IdleAuto
-    /// (aber NICHT, wenn FX/Sticky inzwischen übernommen hat).
-    /// </summary>
     public void SetNpcTimed(string t, float seconds)
     {
         CancelIntroIfNeeded();
@@ -183,13 +183,23 @@ public class HUDText : MonoBehaviour
         _timedRoutine = StartCoroutine(CoTimedReturn(seconds));
     }
 
-    /// <summary>
-    /// Macht HUD explizit leer (z.B. nach Intro oder wenn ihr resetten wollt).
-    /// </summary>
     public void ClearText()
     {
         StopTimed();
         if (textTMP != null) textTMP.text = "";
+    }
+
+    public void ForceResetToIdle()
+    {
+        StopIntro();
+        _introFinished = true;
+
+        StopTimed();
+        _mode = Mode.IdleAuto;
+
+        SetIdleAuto();
+
+        if (debugLogs) Debug.Log("[HUD] ForceResetToIdle()");
     }
 
     // =========================================================
@@ -223,14 +233,12 @@ public class HUDText : MonoBehaviour
             SetText(introTexts[i]);
             yield return new WaitForSeconds(introSeconds);
 
-            // falls Intro zwischendurch abgebrochen wurde
             if (!_introRunning) yield break;
         }
 
         _introRunning = false;
         _introFinished = true;
 
-        // danach: NICHT Idle-Text, sondern leer
         ClearText();
         _mode = Mode.IdleAuto;
     }
@@ -238,6 +246,9 @@ public class HUDText : MonoBehaviour
     IEnumerator CoTimedReturn(float seconds)
     {
         yield return new WaitForSeconds(seconds);
+
+        // unlock first so IsTimedLocked becomes false when SetIdleAuto checks it elsewhere
+        _timedRoutine = null;
 
         if (!IsLockedByFX && !IsSticky && !_introRunning)
             SetIdleAuto();

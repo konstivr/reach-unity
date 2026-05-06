@@ -44,19 +44,10 @@ public class PossessableCharacter : MonoBehaviour
     // Movement Speeds (Player vs NPC)
     // ============================================================
     [Header("Movement Speeds")]
-    [Tooltip("MoveSpeed für den aktiven (kontrollierten) Player.")]
     public float playerMoveSpeed = 4.5f;
-
-    [Tooltip("SprintSpeed für den aktiven Player (nur relevant, wenn sprint genutzt wird).")]
     public float playerSprintSpeed = 6.0f;
-
-    [Tooltip("MoveSpeed für NPC (nicht kontrolliert).")]
     public float npcMoveSpeed = 2.2f;
-
-    [Tooltip("SprintSpeed für NPC (meist egal, aber der ThirdPersonController hat den Wert).")]
     public float npcSprintSpeed = 3.0f;
-
-    [Tooltip("Wenn true: überschreibt beim Switch die ThirdPersonController Speeds automatisch.")]
     public bool applySpeedsOnControlChange = true;
 
     // ============================================================
@@ -66,13 +57,16 @@ public class PossessableCharacter : MonoBehaviour
     public AudioClip ambientLoop;
 
     [Range(0f, 1f)]
-    public float ambientVolume = 0.05f;
+    public float ambientVolume = 0.10f;
 
     [Range(0.8f, 1.2f)]
     public float ambientPitch = 1.0f;
 
     [Tooltip("Optional: Wenn leer, wird automatisch ein 2D AudioSource angelegt.")]
     public AudioSource ambientSource;
+
+    [Tooltip("✅ Wenn true: Ambient läuft NUR beim kontrollierten Character (switcht clean).")]
+    public bool ambientOnlyWhenControlled = true;
 
     [Header("Debug")]
     public bool debugLogs = true;
@@ -81,6 +75,12 @@ public class PossessableCharacter : MonoBehaviour
 
     bool _isControlled = false;
     bool _isProximityFrozen = false;
+
+    // ✅ NEW: External freeze (e.g., GateFreeze). Independent from distance logic.
+    bool _externalFrozen = false;
+    string _externalFreezeReason = "";
+
+    bool IsEffectivelyFrozen => _isProximityFrozen || _externalFrozen;
 
     void Awake()
     {
@@ -130,17 +130,24 @@ public class PossessableCharacter : MonoBehaviour
             ambientSource.playOnAwake = false;
             ambientSource.loop = true;
             ambientSource.spatialBlend = 0f; // 2D
-            ambientSource.volume = ambientVolume;
-            ambientSource.pitch = ambientPitch;
         }
     }
 
     void Start()
     {
         ApplyAmbientSettings();
-        TryStartAmbient();
 
-        // Initial: wenn nicht kontrolliert gestartet -> NPC Speeds
+        // ✅ WICHTIG: nicht automatisch überall starten.
+        // Ambient startet/stoppt über SetControlled(), damit es wirklich "wechselt".
+        if (!ambientOnlyWhenControlled)
+        {
+            TryStartAmbient();
+        }
+        else
+        {
+            StopAmbient();
+        }
+
         if (applySpeedsOnControlChange)
             ApplyMovementSpeeds(_isControlled);
     }
@@ -165,6 +172,13 @@ public class PossessableCharacter : MonoBehaviour
             ambientSource.Play();
     }
 
+    void StopAmbient()
+    {
+        if (!ambientSource) return;
+        if (ambientSource.isPlaying)
+            ambientSource.Stop();
+    }
+
     void OnEnable()
     {
         if (IsValid && !ValidCharacters.Contains(this))
@@ -187,23 +201,24 @@ public class PossessableCharacter : MonoBehaviour
     {
         if (!IsValid) return;
 
-        // Falls du Werte zur Laufzeit im Inspector änderst:
+        // Live Inspector Änderungen übernehmen
         ApplyAmbientSettings();
-        TryStartAmbient();
 
-        // Proximity Freeze nur für NPCs (nicht kontrolliert) und nur wenn enabled
+        // Proximity Freeze nur für NPCs (nicht controlled)
         if (!enableProximityStopLook || _isControlled || proximityStopRadius <= 0f)
         {
+            // ✅ only release proximity-freeze (not external freeze)
             if (_isProximityFrozen) SetProximityFrozen(false);
+            ApplyWanderState();
             return;
         }
 
         if (!swapManager || swapManager.current == null) return;
 
-        // Wenn dieser Character selbst der aktuell kontrollierte ist: niemals einfrieren
         if (swapManager.current == this)
         {
             if (_isProximityFrozen) SetProximityFrozen(false);
+            ApplyWanderState();
             return;
         }
 
@@ -251,9 +266,8 @@ public class PossessableCharacter : MonoBehaviour
 
     void ApplyWanderState()
     {
-        // wander nur an wenn: nicht controlled UND nicht proximityFrozen
         if (wander)
-            wander.enabled = (!_isControlled && !_isProximityFrozen);
+            wander.enabled = (!_isControlled && !IsEffectivelyFrozen);
     }
 
     void ApplyMovementSpeeds(bool controlled)
@@ -278,8 +292,32 @@ public class PossessableCharacter : MonoBehaviour
     }
 
     /// <summary>
-    /// controlled=true  -> Player steuert (PlayerInput an, NPCWander aus)
-    /// controlled=false -> NPC läuft ruhig random (PlayerInput aus, NPCWander an) – außer proximity freeze
+    /// ✅ External freeze (e.g., GateFreeze). This does NOT depend on distance logic.
+    /// When frozen: NPC wander is OFF, even if proximity logic would unfreeze.
+    /// </summary>
+    public void SetExternalFrozen(bool frozen, string reason = "external")
+    {
+        _externalFrozen = frozen;
+        _externalFreezeReason = frozen ? reason : "";
+
+        // safe: stop residual inputs
+        if (inputs)
+        {
+            inputs.MoveInput(Vector2.zero);
+            inputs.LookInput(Vector2.zero);
+            inputs.SprintInput(false);
+            inputs.JumpInput(false);
+        }
+
+        ApplyWanderState();
+
+        if (debugLogs)
+            Debug.Log($"[Possessable] ExternalFrozen({frozen}) reason='{_externalFreezeReason}' -> '{name}' | wander={(wander ? (wander.enabled ? "ON" : "OFF") : "NULL")}");
+    }
+
+    /// <summary>
+    /// controlled=true  -> Player steuert
+    /// controlled=false -> NPC wandert (außer proximity/external freeze)
     /// </summary>
     public void SetControlled(bool controlled)
     {
@@ -291,7 +329,6 @@ public class PossessableCharacter : MonoBehaviour
 
         _isControlled = controlled;
 
-        // Sobald wir kontrolliert werden: Proximity Freeze aus
         if (_isControlled && _isProximityFrozen)
             _isProximityFrozen = false;
 
@@ -301,22 +338,18 @@ public class PossessableCharacter : MonoBehaviour
         if (playerInput) playerInput.enabled = controlled;
 #endif
 
-        // Inputs + Controller müssen für AI UND Player aktiv bleiben
         if (thirdPersonController) thirdPersonController.enabled = true;
         if (inputs) inputs.enabled = true;
 
-        // Push nur beim kontrollierten Character
         if (rigidBodyPush)
         {
             rigidBodyPush.enabled = controlled;
             rigidBodyPush.canPush = controlled;
         }
 
-        // Speeds sauber setzen (Player vs NPC)
         if (applySpeedsOnControlChange)
             ApplyMovementSpeeds(controlled);
 
-        // Safety: keine „hängenden“ Inputs beim Wechsel
         if (inputs)
         {
             inputs.MoveInput(Vector2.zero);
@@ -326,5 +359,17 @@ public class PossessableCharacter : MonoBehaviour
         }
 
         ApplyWanderState();
+
+        // ✅ Ambient switching logic:
+        if (ambientOnlyWhenControlled)
+        {
+            if (controlled) TryStartAmbient();
+            else StopAmbient();
+        }
+        else
+        {
+            // old behavior: everyone plays
+            TryStartAmbient();
+        }
     }
 }

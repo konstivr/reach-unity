@@ -9,17 +9,18 @@ public class InteractionContextRouter : MonoBehaviour
 
     [Header("Prompts")]
     [TextArea(1, 3)]
-    public string promptReachOut = "Press input to reach out";
+    public string promptReachOut = "Press Interact to reach out";
 
     [TextArea(1, 3)]
-    public string promptObject = "Press input";
+    public string promptObject = "Press Interact";
+
+    [TextArea(1, 3)]
+    public string promptGateWaiting = "Press Speak";
 
     [Header("Scan")]
     public float maxObjectScanRadius = 3.0f;
 
-    PlayerAssignedWorldObject _nearestObj;
-    PlayerAssignedWorldObject _lastObjInRange;
-    bool _wasInObjRange = false;
+    WorldTaskInteractable _nearestTask;
 
     void Awake()
     {
@@ -40,87 +41,111 @@ public class InteractionContextRouter : MonoBehaviour
 
     void OnSwitched(PossessableCharacter from, PossessableCharacter to)
     {
-        _nearestObj = null;
-        _lastObjInRange = null;
-        _wasInObjRange = false;
+        _nearestTask = null;
         if (hud) hud.SetIdlePerspective();
     }
 
     void Update()
     {
         if (!swapManager || !swapManager.current || !swapManager.current.inputs) return;
-
-        if (ReachTransitionFX.Instance != null && ReachTransitionFX.Instance.IsTransitioning)
-            return;
+        if (ReachTransitionFX.Instance != null && ReachTransitionFX.Instance.IsTransitioning) return;
 
         var current = swapManager.current;
         var inputs = current.inputs;
 
-        _nearestObj = FindNearestAssignedObject(current);
+        _nearestTask = FindNearestTask(current);
 
-        bool inObj = _nearestObj != null && _nearestObj.IsInRange(current);
-        bool inGateRange = gate != null && gate.HasGateTargetInRange;
+        bool inTaskRange = _nearestTask != null && _nearestTask.IsInRange(current);
 
-        // leaving object zone: use LAST object that was in range
-        if (_wasInObjRange && !inObj)
+        bool gateHasTargetInRange = gate != null && gate.HasGateTargetInRange;
+        bool gateWaiting = gate != null && gate.IsWaitingForPassphrase;
+        bool gateBusy = gate != null && gate.IsGateBusy; // includes waiting + tts playing (as implemented in your gate)
+
+        // -------------------------
+        // HUD (only if free)
+        // -------------------------
+        if (hud != null)
         {
-            if (_lastObjInRange != null)
-                _lastObjInRange.ResetLocalStateOnExit();
-
-            if (hud) hud.ClearSticky();
-            _lastObjInRange = null;
+            if (!hud.IsLockedByFX && !hud.IsSticky && !hud.IsTimedLocked && !hud.IsIntroRunning)
+            {
+                if (inTaskRange)
+                {
+                    string p = _nearestTask.GetPrompt();
+                    hud.SetPrompt(!string.IsNullOrEmpty(p) ? p : promptObject);
+                }
+                else if (gateWaiting)
+                {
+                    hud.SetPrompt(promptGateWaiting);
+                }
+                else if (gateBusy)
+                {
+                    hud.SetPrompt("...");
+                }
+                else if (gateHasTargetInRange)
+                {
+                    hud.SetPrompt(promptReachOut);
+                }
+                else
+                {
+                    hud.SetIdleAuto();
+                }
+            }
         }
 
-        if (inObj)
-            _lastObjInRange = _nearestObj;
+        // -------------------------
+        // Interact pressed?
+        // -------------------------
+        if (!inputs.interact) return;
 
-        _wasInObjRange = inObj;
-
-        // HUD (if free)
-        if (hud != null && !hud.IsLockedByFX && !hud.IsSticky)
+        // 0) CRITICAL: If gate is WAITING -> do NOT cancel and do NOT restart.
+        // Let SpeechInput consume/handle this press as "Speak".
+        if (gate != null && gateWaiting)
         {
-            if (inObj)
-                hud.SetPrompt((_nearestObj.GetPrompt().Length > 0) ? _nearestObj.GetPrompt() : promptObject);
-            else if (inGateRange)
-                hud.SetPrompt(promptReachOut);
-            else
-                hud.SetIdleAuto();
-        }
-
-        // ✅ IMPORTANT: use EDGE
-        if (!inputs.dialogueStart) return;
-
-        // a) Object has priority
-        if (inObj)
-        {
-            _nearestObj.HandleInputF(hud);
             return;
         }
 
-        // b) Gate handles it internally (InteractionGateProximity)
+        // 1) If gate is busy (but NOT waiting) -> Interact cancels gate (safety)
+        if (gate != null && gateBusy)
+        {
+            gate.CancelGate();
+            return;
+        }
+
+        // 2) Task priority
+        if (inTaskRange)
+        {
+            bool consumed = _nearestTask.TryInteract(current, hud);
+            if (consumed) return;
+        }
+
+        // 3) Gate trigger (reach out)
+        if (gate != null && gateHasTargetInRange)
+        {
+            gate.TryTriggerGateFromInput();
+            return;
+        }
+
+        // 4) nothing
     }
 
-    PlayerAssignedWorldObject FindNearestAssignedObject(PossessableCharacter current)
+    WorldTaskInteractable FindNearestTask(PossessableCharacter current)
     {
-        var all = FindObjectsOfType<PlayerAssignedWorldObject>();
-        PlayerAssignedWorldObject best = null;
+        var all = FindObjectsOfType<WorldTaskInteractable>();
+        WorldTaskInteractable best = null;
         float bestSqr = float.MaxValue;
 
         float rSqr = maxObjectScanRadius * maxObjectScanRadius;
 
-        foreach (var o in all)
+        foreach (var t in all)
         {
-            if (!o || o.IsCompleted) continue;
-            if (!o.assignedTo || o.assignedTo != current) continue;
+            if (!t || t.IsCompleted || t.IsBusy) continue;
+            if (t.ownerCharacter != null && t.ownerCharacter != current) continue;
 
-            float dSqr = (o.transform.position - current.transform.position).sqrMagnitude;
+            float dSqr = (t.transform.position - current.transform.position).sqrMagnitude;
             if (dSqr <= rSqr && dSqr < bestSqr)
             {
-                if (o.IsInRange(current))
-                {
-                    bestSqr = dSqr;
-                    best = o;
-                }
+                bestSqr = dSqr;
+                best = t;
             }
         }
         return best;
