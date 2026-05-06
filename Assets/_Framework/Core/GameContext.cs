@@ -1,5 +1,6 @@
 using UnityEngine;
 using Reach.Framework.InputSys;
+using Reach.Framework.Dialogue;
 
 namespace Reach.Framework.Core
 {
@@ -16,24 +17,23 @@ namespace Reach.Framework.Core
         public StoryPack pack;
 
         [Header("Services (assigned in inspector)")]
-        [Tooltip("Cross-platform input reader. Drop the InputReader on this GameObject and link it here.")]
+        [Tooltip("Cross-platform input reader.")]
         public InputReader input;
 
         // ============================================================
         // Runtime services
         // ============================================================
 
-        /// <summary>All currently spawned PossessableCharacters.</summary>
         public CharacterRegistry Characters { get; } = new CharacterRegistry();
 
         public InputReader Input => input;
 
-        /// <summary>The PerspectiveManager. Set by PerspectiveManager itself in Awake.</summary>
         public IPerspectiveManager Perspective { get; set; }
+
+        public SpeechSystem Speech { get; set; }
 
         // Will be filled in later häppchen:
         // public IHud Hud { get; set; }
-        // public ISpeechSystem Speech { get; set; }
         // public IGateSystem Gate { get; set; }
         // public IPauseSystem Pause { get; set; }
 
