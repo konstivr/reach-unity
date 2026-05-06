@@ -28,10 +28,12 @@ namespace Reach.Framework.Core
 
         public InputReader Input => input;
 
+        /// <summary>The PerspectiveManager. Set by PerspectiveManager itself in Awake.</summary>
+        public IPerspectiveManager Perspective { get; set; }
+
         // Will be filled in later häppchen:
         // public IHud Hud { get; set; }
         // public ISpeechSystem Speech { get; set; }
-        // public IPerspectiveManager Perspective { get; set; }
         // public IGateSystem Gate { get; set; }
         // public IPauseSystem Pause { get; set; }
 
