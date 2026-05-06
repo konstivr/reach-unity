@@ -9,11 +9,8 @@ namespace Reach.Framework.Core
     /// Responsibilities:
     ///   - Hold a reference to its CharacterDefinition (the SO).
     ///   - Self-register with GameContext.Characters.
-    ///   - Enable/disable its movement + ambient when control changes.
+    ///   - Enable/disable its movement + wander when control changes.
     ///   - Validate setup at runtime.
-    ///
-    /// Movement and NPC-wander logic live in separate components on the same
-    /// GameObject. This script enables/disables them via SetControlled().
     /// </summary>
     public class PossessableCharacter : MonoBehaviour
     {
@@ -21,13 +18,11 @@ namespace Reach.Framework.Core
         [Tooltip("The CharacterDefinition asset describing this character.")]
         public CharacterDefinition definition;
 
-        [Header("References (auto if left empty)")]
-        [Tooltip("Component that drives movement when this character is controlled. " +
-                 "Will be enabled/disabled by SetControlled. " +
-                 "(Implementation comes in next iteration — leave empty for now.)")]
+        [Header("References (auto-resolved if left empty)")]
+        [Tooltip("Component that drives movement when controlled. Auto-found: CharacterMovement.")]
         public Behaviour movementComponent;
 
-        [Tooltip("Component that drives NPC wandering when uncontrolled. Will be enabled/disabled inversely.")]
+        [Tooltip("Component that drives wandering when uncontrolled. Auto-found: CharacterWander.")]
         public Behaviour wanderComponent;
 
         [Tooltip("Where the camera should follow / look at.")]
@@ -53,6 +48,7 @@ namespace Reach.Framework.Core
 
         void Awake()
         {
+            AutoResolveReferences();
             ValidateSetup();
             EnsureAmbientSource();
             ApplyAmbientClipFromDefinition();
@@ -70,8 +66,17 @@ namespace Reach.Framework.Core
         }
 
         // ============================================================
-        // Validation
+        // Setup
         // ============================================================
+
+        void AutoResolveReferences()
+        {
+            if (movementComponent == null)
+                movementComponent = GetComponent<CharacterMovement>();
+
+            if (wanderComponent == null)
+                wanderComponent = GetComponent<CharacterWander>();
+        }
 
         void ValidateSetup()
         {
@@ -84,18 +89,15 @@ namespace Reach.Framework.Core
             }
 
             if (cameraTarget == null)
-            {
-                Debug.LogWarning($"[PossessableCharacter] '{name}': cameraTarget not assigned. Camera follow will fail.");
-                // Not fatal: still allow registration
-            }
+                Debug.LogWarning($"[PossessableCharacter] '{name}': cameraTarget not assigned. Camera follow will fall back to transform.");
 
-            // movementComponent and wanderComponent are intentionally optional in this iteration;
-            // they will be required once the movement system is wired.
+            if (movementComponent == null)
+                Debug.LogWarning($"[PossessableCharacter] '{name}': no CharacterMovement found. Player will not be able to move when controlling this character.");
+
+            if (wanderComponent == null && debugLogs)
+                Debug.Log($"[PossessableCharacter] '{name}': no CharacterWander (NPC will be static when not controlled).");
 
             IsValid = ok;
-
-            if (debugLogs)
-                Debug.Log($"[PossessableCharacter] '{name}' valid={IsValid} def='{(definition ? definition.displayName : "NULL")}'");
         }
 
         // ============================================================
@@ -109,7 +111,7 @@ namespace Reach.Framework.Core
             ambientSource = gameObject.AddComponent<AudioSource>();
             ambientSource.playOnAwake = false;
             ambientSource.loop = true;
-            ambientSource.spatialBlend = 0f; // 2D
+            ambientSource.spatialBlend = 0f;
         }
 
         void ApplyAmbientClipFromDefinition()
@@ -137,21 +139,16 @@ namespace Reach.Framework.Core
         // Control
         // ============================================================
 
-        /// <summary>
-        /// Switch this character between controlled (player) and uncontrolled (NPC).
-        /// </summary>
         public virtual void SetControlled(bool controlled)
         {
             IsControlled = controlled;
 
-            // Movement / wander toggle
             if (movementComponent != null)
                 movementComponent.enabled = controlled;
 
             if (wanderComponent != null)
                 wanderComponent.enabled = !controlled;
 
-            // Ambient: only the controlled character's bed plays
             if (controlled) StartAmbient();
             else StopAmbient();
 
