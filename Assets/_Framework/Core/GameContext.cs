@@ -1,18 +1,11 @@
 using UnityEngine;
+using Reach.Framework.InputSys;
 
 namespace Reach.Framework.Core
 {
     /// <summary>
     /// Central service locator for the framework.
     /// One instance lives in the scene; all framework systems read from it.
-    ///
-    /// Replace the previous "FindObjectOfType everywhere" pattern with:
-    ///     GameContext.Instance.Characters
-    ///     GameContext.Instance.Pack
-    ///     GameContext.Instance.Hud
-    ///     ...
-    ///
-    /// Service refs are populated by their respective systems on Awake/Enable.
     /// </summary>
     public class GameContext : MonoBehaviour
     {
@@ -22,12 +15,18 @@ namespace Reach.Framework.Core
         [Tooltip("The active StoryPack. Swap this asset to switch all game content.")]
         public StoryPack pack;
 
+        [Header("Services (assigned in inspector)")]
+        [Tooltip("Cross-platform input reader. Drop the InputReader on this GameObject and link it here.")]
+        public InputReader input;
+
         // ============================================================
-        // Runtime services (populated by systems, not by inspector)
+        // Runtime services
         // ============================================================
 
         /// <summary>All currently spawned PossessableCharacters.</summary>
         public CharacterRegistry Characters { get; } = new CharacterRegistry();
+
+        public InputReader Input => input;
 
         // Will be filled in later häppchen:
         // public IHud Hud { get; set; }
@@ -53,6 +52,9 @@ namespace Reach.Framework.Core
 
             if (pack == null)
                 Debug.LogWarning("[GameContext] No StoryPack assigned. Framework will not load any content.");
+
+            if (input == null)
+                Debug.LogWarning("[GameContext] No InputReader assigned. Input will not work.");
         }
 
         void OnDestroy()
