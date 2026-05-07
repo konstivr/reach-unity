@@ -1,6 +1,7 @@
 using UnityEngine;
 using Reach.Framework.InputSys;
 using Reach.Framework.Dialogue;
+using Reach.Framework.HUD;
 
 namespace Reach.Framework.Core
 {
@@ -32,8 +33,9 @@ namespace Reach.Framework.Core
 
         public SpeechSystem Speech { get; set; }
 
+        public IHud Hud { get; set; }
+
         // Will be filled in later häppchen:
-        // public IHud Hud { get; set; }
         // public IGateSystem Gate { get; set; }
         // public IPauseSystem Pause { get; set; }
 
