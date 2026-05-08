@@ -181,12 +181,19 @@ namespace Reach.Framework.Dialogue
                 if (debugLogs) Debug.Log("[SpeechInput] Route -> Gate passphrase");
                 await gate.TryHandlePassphraseAsync(wavPath);
             }
+            else if (ctx?.Dialogue != null)
+            {
+                if (debugLogs) Debug.Log("[SpeechInput] Route -> Chat");
+
+                // HUD: feedback while we wait for STT/LLM/TTS
+                if (hud != null && hud.IsFree)
+                    hud.SetSticky(sendingPrompt);
+
+                await ctx.Dialogue.PlayerSpokeAsync(wavPath);
+            }
             else
             {
-                // Future: route to DialogueManager.PlayerSpoke()
-                if (hud != null && hud.IsFree)
-                    hud.SetTimed("(Chat not yet wired)", 1.5f);
-                if (debugLogs) Debug.Log("[SpeechInput] Route -> Chat (not yet implemented)");
+                if (debugLogs) Debug.LogWarning("[SpeechInput] No DialogueManager available.");
             }
 
             SafeDelete(wavPath);
