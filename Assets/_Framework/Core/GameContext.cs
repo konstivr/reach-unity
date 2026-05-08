@@ -27,9 +27,7 @@ namespace Reach.Framework.Core
         public IHud Hud { get; set; }
         public IGateSystem Gate { get; set; }
         public IDialogueManager Dialogue { get; set; }
-
-        // Coming later:
-        // public IPauseSystem Pause { get; set; }
+        public IPauseSystem Pause { get; set; }
 
         void Awake()
         {
