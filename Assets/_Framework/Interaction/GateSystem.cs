@@ -341,12 +341,22 @@ namespace Reach.Framework.Interaction
                 return true; // consumed
             }
 
-            // Match → switch
+            // Match → run transition (which calls switch internally) OR switch directly
             var target = _activeTarget;
             _waitingForPassphrase = false;
 
-            bool switched = ctx.Perspective.TrySwitchTo(target);
-            if (debugLogs) Debug.Log($"[GateSystem] MATCH '{spoken}' → switch={switched}");
+            bool switched;
+            var transition = FindObjectOfType<Reach.Framework.FX.ReachTransitionFX>();
+            if (transition != null)
+            {
+                if (debugLogs) Debug.Log($"[GateSystem] MATCH '{spoken}' → playing transition");
+                switched = await transition.PlayAndSwitchAsync(target);
+            }
+            else
+            {
+                if (debugLogs) Debug.Log($"[GateSystem] MATCH '{spoken}' → no transition, direct switch");
+                switched = ctx.Perspective.TrySwitchTo(target);
+            }
 
             CancelGate(); // cleanup
             ctx.Hud?.ForceResetToIdle();
