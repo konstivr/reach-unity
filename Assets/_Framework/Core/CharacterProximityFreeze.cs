@@ -38,10 +38,10 @@ namespace Reach.Framework.Core
         {
             if (character == null) return;
 
-            // Don't freeze the controlled character — only NPCs
+            // Don't touch wander on the controlled character — let PossessableCharacter own it.
             if (character.IsControlled)
             {
-                SetFrozen(false);
+                _isFrozen = false;
                 return;
             }
 
@@ -49,13 +49,12 @@ namespace Reach.Framework.Core
             if (pm == null || pm.Current == null) return;
 
             var current = pm.Current;
-            if (current == character) return; // shouldn't happen, defensive
+            if (current == character) return; // defensive
 
             float dist = Vector3.Distance(transform.position, current.transform.position);
             bool shouldFreeze = dist <= freezeRadius;
 
-            if (shouldFreeze != _isFrozen)
-                SetFrozen(shouldFreeze);
+            SetFrozen(shouldFreeze);
 
             if (_isFrozen)
                 RotateTowards(current);
@@ -63,6 +62,7 @@ namespace Reach.Framework.Core
 
         void SetFrozen(bool frozen)
         {
+            if (_isFrozen == frozen) return;
             _isFrozen = frozen;
 
             if (wander != null)
