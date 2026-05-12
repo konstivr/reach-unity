@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Collections.Generic;
 using UnityEngine;
 using Reach.Framework.Core;
 using Reach.Framework.HUD;
@@ -6,17 +7,14 @@ using Reach.Framework.HUD;
 namespace Reach.Framework.Interaction
 {
     /// <summary>
-    /// A world-placed object that any character can interact with.
-    /// Each character can have its own audio and response text
-    /// (configured in the InteractableObjectDefinition.responsesPerCharacter list).
+    /// A world-placed object that any character can interact with repeatedly.
+    /// Each character gets their own audio + response text from the
+    /// InteractableObjectDefinition.responsesPerCharacter list.
     ///
-    /// Workflow:
-    ///   Player walks into range
-    ///   → HUD shows promptText
-    ///   → Player presses Interact
-    ///   → Look up which character is controlled, find their response
-    ///   → OneShot: play audio, show text, hide
-    ///   → TwoStep: first press primes, second press resolves
+    /// State tracked:
+    ///   - _busy: while an interaction is running (prevents re-entrancy)
+    ///   - _armedSecondStep (TwoStep mode only): primed state per character
+    ///   - _usedByCharacters: who has interacted at least once (for outreach lock)
     /// </summary>
     [DisallowMultipleComponent]
     public class InteractableObject : MonoBehaviour, IInteractable
@@ -36,19 +34,20 @@ namespace Reach.Framework.Interaction
         // State
         // ============================================================
 
-        bool _completed;
         bool _busy;
-        bool _armedSecondStep;
-        CharacterDefinition _interactedBy; // who triggered (most recent)
+        bool _armedSecondStep; // per-character would be nicer but TwoStep is rarely cross-character
+        readonly HashSet<CharacterDefinition> _usedByCharacters = new HashSet<CharacterDefinition>();
 
-        public bool IsCompleted => _completed;
+        public bool IsCompleted => false; // never completed — always re-interactable
         public bool IsBusy => _busy;
 
-        /// <summary>True after a successful (final) interact, IF the definition unlocks outreach.</summary>
-        public bool HasUnlockedOutreach => _completed && definition != null && definition.unlocksOutreach;
+        /// <summary>True if the given character has interacted with this object at least once.</summary>
+        public bool HasBeenUsedBy(CharacterDefinition character) =>
+            character != null && _usedByCharacters.Contains(character);
 
-        /// <summary>The character that last interacted with this object (used by GateSystem for outreach lock).</summary>
-        public CharacterDefinition InteractedBy => _interactedBy;
+        /// <summary>True if any character has interacted with this object and it unlocks outreach.</summary>
+        public bool HasUnlockedOutreachFor(CharacterDefinition character) =>
+            definition != null && definition.unlocksOutreach && HasBeenUsedBy(character);
 
         // ============================================================
         // Lifecycle
@@ -86,14 +85,14 @@ namespace Reach.Framework.Interaction
 
         public bool CanInteract(PossessableCharacter currentPlayer)
         {
-            if (_completed || _busy) return false;
+            if (_busy) return false;
             if (currentPlayer == null) return false;
             return IsInRange(currentPlayer);
         }
 
         public string GetPrompt()
         {
-            if (_completed || definition == null) return "";
+            if (definition == null) return "";
 
             if (definition.mode == InteractActionMode.TwoStep && _armedSecondStep)
                 return definition.secondStepPromptText;
@@ -140,12 +139,17 @@ namespace Reach.Framework.Interaction
                     else
                     {
                         yield return RunSecondStep(response);
+                        _armedSecondStep = false; // reset for next cycle
                     }
                     break;
             }
 
-            _interactedBy = charDef;
-            CompleteAndApply();
+            if (charDef != null)
+                _usedByCharacters.Add(charDef);
+
+            if (debugLogs)
+                Debug.Log($"[InteractableObject] '{name}' interaction done. usedBy count={_usedByCharacters.Count}");
+
             _busy = false;
         }
 
@@ -213,17 +217,6 @@ namespace Reach.Framework.Interaction
             if (audioSource == null || clip == null) return;
             audioSource.volume = volume;
             audioSource.PlayOneShot(clip);
-        }
-
-        void CompleteAndApply()
-        {
-            _completed = true;
-
-            if (debugLogs) Debug.Log($"[InteractableObject] '{name}' completed " +
-                                      $"(by={_interactedBy?.displayName ?? "?"}, unlocksOutreach={definition.unlocksOutreach})");
-
-            if (definition.hideOnComplete)
-                gameObject.SetActive(false);
         }
     }
 }

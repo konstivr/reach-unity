@@ -6,17 +6,17 @@ namespace Reach.Framework.Core
 {
     public enum InteractActionMode
     {
-        /// <summary>One press: action runs once, object disappears (if hideOnComplete).</summary>
+        /// <summary>One press = one full response.</summary>
         OneShot,
 
-        /// <summary>First press: armed + first response. Second press: action runs, object disappears.</summary>
+        /// <summary>First press primes, second press resolves. Resets after resolve so the cycle can repeat.</summary>
         TwoStep
     }
 
     /// <summary>
-    /// Defines a world-placed object that any character can interact with.
-    /// Each character can have its own audio + response text.
-    /// Characters not listed fall back to defaultResponse.
+    /// A world-placed object that any character can interact with.
+    /// Object persists — every character can interact with it repeatedly,
+    /// each playing their own per-character response.
     /// </summary>
     [CreateAssetMenu(
         fileName = "InteractableObjectDefinition",
@@ -52,18 +52,10 @@ namespace Reach.Framework.Core
         [Tooltip("Used when the current character is not in responsesPerCharacter.")]
         public CharacterResponse defaultResponse = new CharacterResponse();
 
-        [Header("On Complete")]
-        [Tooltip("If true: object hides itself after the (final) press.")]
-        public bool hideOnComplete = true;
-
         [Header("Outreach Unlock")]
-        [Tooltip("If true: completing this action unlocks outreach for the character that interacted with it.")]
+        [Tooltip("If true: a character that has interacted with this object at least once can reach out to others.")]
         public bool unlocksOutreach = true;
 
-        /// <summary>
-        /// Find the response config for a given character.
-        /// Falls back to defaultResponse if no specific entry exists.
-        /// </summary>
         public CharacterResponse GetResponseFor(CharacterDefinition character)
         {
             if (character != null && responsesPerCharacter != null)
@@ -79,9 +71,6 @@ namespace Reach.Framework.Core
         }
     }
 
-    /// <summary>
-    /// What happens when a specific character interacts with an object.
-    /// </summary>
     [Serializable]
     public class CharacterResponse
     {
@@ -90,14 +79,11 @@ namespace Reach.Framework.Core
 
         [Header("Response Text")]
         [TextArea(1, 4)]
-        [Tooltip("Shown in HUD after the (final) press.")]
         public string responseText = "";
 
-        [Tooltip("How long the response text stays before HUD returns to idle.")]
         public float responseDurationSeconds = 2.5f;
 
         [Header("Audio")]
-        [Tooltip("Audio played on the (final) press.")]
         public AudioClip audioClip;
 
         [Tooltip("TwoStep mode only: audio for the first press.")]

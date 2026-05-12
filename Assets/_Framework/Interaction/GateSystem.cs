@@ -213,11 +213,10 @@ namespace Reach.Framework.Interaction
             if (pm.VisitedCount <= 1)
                 return true;
 
-            // Require this character to have completed at least one outreach-unlocking object.
-            return HasCharacterCompletedAnyObject(pm.Current);
+            return HasCharacterUsedAnyOutreachObject(pm.Current);
         }
 
-        bool HasCharacterCompletedAnyObject(PossessableCharacter character)
+        bool HasCharacterUsedAnyOutreachObject(PossessableCharacter character)
         {
             if (character == null || character.Definition == null) return false;
 
@@ -225,8 +224,8 @@ namespace Reach.Framework.Interaction
             for (int i = 0; i < all.Length; i++)
             {
                 var io = all[i];
-                if (io == null || !io.HasUnlockedOutreach) continue;
-                if (io.InteractedBy == character.Definition) return true;
+                if (io == null) continue;
+                if (io.HasUnlockedOutreachFor(character.Definition)) return true;
             }
             return false;
         }
