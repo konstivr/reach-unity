@@ -114,7 +114,6 @@ namespace Reach.Framework.Interaction
             {
                 var io = all[i];
                 if (io == null || io.IsCompleted || io.IsBusy) continue;
-                if (io.ownerCharacter != null && io.ownerCharacter != current) continue;
 
                 float sqr = (io.transform.position - current.transform.position).sqrMagnitude;
                 if (sqr <= bestSqr)

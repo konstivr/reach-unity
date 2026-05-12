@@ -213,22 +213,22 @@ namespace Reach.Framework.Interaction
             if (pm.VisitedCount <= 1)
                 return true;
 
-            // Look for the current character's interact object
-            var current = pm.Current;
-            var interact = FindCurrentInteractObject(current);
-            if (interact == null) return true; // no object = no lock
-
-            return interact.HasUnlockedOutreach;
+            // Require this character to have completed at least one outreach-unlocking object.
+            return HasCharacterCompletedAnyObject(pm.Current);
         }
 
-        InteractableObject FindCurrentInteractObject(PossessableCharacter character)
+        bool HasCharacterCompletedAnyObject(PossessableCharacter character)
         {
-            // Find the InteractableObject whose ownerCharacter is this character.
-            var all = FindObjectsOfType<InteractableObject>();
+            if (character == null || character.Definition == null) return false;
+
+            var all = FindObjectsOfType<InteractableObject>(includeInactive: true);
             for (int i = 0; i < all.Length; i++)
-                if (all[i] != null && all[i].ownerCharacter == character)
-                    return all[i];
-            return null;
+            {
+                var io = all[i];
+                if (io == null || !io.HasUnlockedOutreach) continue;
+                if (io.InteractedBy == character.Definition) return true;
+            }
+            return false;
         }
 
         // ============================================================

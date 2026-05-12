@@ -1,3 +1,5 @@
+using System;
+using System.Collections.Generic;
 using UnityEngine;
 
 namespace Reach.Framework.Core
@@ -12,8 +14,9 @@ namespace Reach.Framework.Core
     }
 
     /// <summary>
-    /// Defines the single interactable object belonging to a character.
-    /// Reference one of these from CharacterDefinition.interactObject.
+    /// Defines a world-placed object that any character can interact with.
+    /// Each character can have its own audio + response text.
+    /// Characters not listed fall back to defaultResponse.
     /// </summary>
     [CreateAssetMenu(
         fileName = "InteractableObjectDefinition",
@@ -32,7 +35,7 @@ namespace Reach.Framework.Core
         [Tooltip("Distance in meters within which the player can interact.")]
         public float interactRadius = 2.5f;
 
-        [Header("Prompts")]
+        [Header("Default Prompt (shown when in range)")]
         [TextArea(1, 3)]
         public string promptText = "Press Interact";
 
@@ -40,30 +43,67 @@ namespace Reach.Framework.Core
         [Tooltip("Only used in TwoStep mode after the first press.")]
         public string secondStepPromptText = "Press again";
 
-        [Header("Response Text (HUD)")]
-        [TextArea(1, 4)]
-        [Tooltip("Text shown after the (final) press. Empty = no response text.")]
-        public string responseText = "";
+        [Header("Per-Character Responses")]
+        [Tooltip("Each entry defines what happens when a specific character interacts with this object. " +
+                 "Characters not listed here use 'defaultResponse'.")]
+        public List<CharacterResponse> responsesPerCharacter = new List<CharacterResponse>();
 
-        [Tooltip("How long the response text stays before HUD returns to idle.")]
-        public float responseDurationSeconds = 2.5f;
-
-        [Header("Audio")]
-        [Tooltip("Audio played on (final) press. Optional.")]
-        public AudioClip audioClip;
-
-        [Tooltip("Only used in TwoStep mode: audio for the first press. Optional.")]
-        public AudioClip firstStepAudioClip;
-
-        [Range(0f, 1f)]
-        public float audioVolume = 1f;
+        [Header("Default Response (fallback)")]
+        [Tooltip("Used when the current character is not in responsesPerCharacter.")]
+        public CharacterResponse defaultResponse = new CharacterResponse();
 
         [Header("On Complete")]
         [Tooltip("If true: object hides itself after the (final) press.")]
         public bool hideOnComplete = true;
 
         [Header("Outreach Unlock")]
-        [Tooltip("If true: completing this action is required before player can reach out to a new character.")]
+        [Tooltip("If true: completing this action unlocks outreach for the character that interacted with it.")]
         public bool unlocksOutreach = true;
+
+        /// <summary>
+        /// Find the response config for a given character.
+        /// Falls back to defaultResponse if no specific entry exists.
+        /// </summary>
+        public CharacterResponse GetResponseFor(CharacterDefinition character)
+        {
+            if (character != null && responsesPerCharacter != null)
+            {
+                for (int i = 0; i < responsesPerCharacter.Count; i++)
+                {
+                    var r = responsesPerCharacter[i];
+                    if (r != null && r.character == character)
+                        return r;
+                }
+            }
+            return defaultResponse;
+        }
+    }
+
+    /// <summary>
+    /// What happens when a specific character interacts with an object.
+    /// </summary>
+    [Serializable]
+    public class CharacterResponse
+    {
+        [Tooltip("Which character this response is for. Leave null for the default/fallback response.")]
+        public CharacterDefinition character;
+
+        [Header("Response Text")]
+        [TextArea(1, 4)]
+        [Tooltip("Shown in HUD after the (final) press.")]
+        public string responseText = "";
+
+        [Tooltip("How long the response text stays before HUD returns to idle.")]
+        public float responseDurationSeconds = 2.5f;
+
+        [Header("Audio")]
+        [Tooltip("Audio played on the (final) press.")]
+        public AudioClip audioClip;
+
+        [Tooltip("TwoStep mode only: audio for the first press.")]
+        public AudioClip firstStepAudioClip;
+
+        [Range(0f, 1f)]
+        public float audioVolume = 1f;
     }
 }

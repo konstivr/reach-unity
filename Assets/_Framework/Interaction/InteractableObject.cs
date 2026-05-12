@@ -6,17 +6,17 @@ using Reach.Framework.HUD;
 namespace Reach.Framework.Interaction
 {
     /// <summary>
-    /// The single interactable object belonging to one character.
-    /// Configured by an InteractableObjectDefinition (SO).
+    /// A world-placed object that any character can interact with.
+    /// Each character can have its own audio and response text
+    /// (configured in the InteractableObjectDefinition.responsesPerCharacter list).
     ///
     /// Workflow:
-    ///   Player walks into range (assigned character only)
+    ///   Player walks into range
     ///   → HUD shows promptText
     ///   → Player presses Interact
-    ///   → OneShot: action runs once, object hides (if configured)
-    ///   → TwoStep: first press primes, second press runs the action
-    ///
-    /// On completion, optionally unlocks outreach for the owning character.
+    ///   → Look up which character is controlled, find their response
+    ///   → OneShot: play audio, show text, hide
+    ///   → TwoStep: first press primes, second press resolves
     /// </summary>
     [DisallowMultipleComponent]
     public class InteractableObject : MonoBehaviour, IInteractable
@@ -24,10 +24,6 @@ namespace Reach.Framework.Interaction
         [Header("Definition")]
         [Tooltip("The InteractableObjectDefinition SO that drives this object's behavior.")]
         public InteractableObjectDefinition definition;
-
-        [Header("Owner")]
-        [Tooltip("The character who owns this object — only they can interact with it.")]
-        public PossessableCharacter ownerCharacter;
 
         [Header("Audio")]
         [Tooltip("Auto-created if left empty.")]
@@ -42,13 +38,17 @@ namespace Reach.Framework.Interaction
 
         bool _completed;
         bool _busy;
-        bool _armedSecondStep; // for TwoStep mode
+        bool _armedSecondStep;
+        CharacterDefinition _interactedBy; // who triggered (most recent)
 
         public bool IsCompleted => _completed;
         public bool IsBusy => _busy;
 
-        /// <summary>True after the (final) press has been processed and unlocksOutreach is set in the definition.</summary>
+        /// <summary>True after a successful (final) interact, IF the definition unlocks outreach.</summary>
         public bool HasUnlockedOutreach => _completed && definition != null && definition.unlocksOutreach;
+
+        /// <summary>The character that last interacted with this object (used by GateSystem for outreach lock).</summary>
+        public CharacterDefinition InteractedBy => _interactedBy;
 
         // ============================================================
         // Lifecycle
@@ -66,7 +66,7 @@ namespace Reach.Framework.Interaction
                 {
                     audioSource = gameObject.AddComponent<AudioSource>();
                     audioSource.playOnAwake = false;
-                    audioSource.spatialBlend = 1f; // 3D positional
+                    audioSource.spatialBlend = 1f;
                 }
             }
         }
@@ -77,8 +77,7 @@ namespace Reach.Framework.Interaction
 
         public bool IsInRange(PossessableCharacter currentPlayer)
         {
-            if (currentPlayer == null) return false;
-            if (definition == null) return false;
+            if (currentPlayer == null || definition == null) return false;
 
             float distSqr = (transform.position - currentPlayer.transform.position).sqrMagnitude;
             float radius = definition.interactRadius;
@@ -89,7 +88,6 @@ namespace Reach.Framework.Interaction
         {
             if (_completed || _busy) return false;
             if (currentPlayer == null) return false;
-            if (ownerCharacter != null && currentPlayer != ownerCharacter) return false;
             return IsInRange(currentPlayer);
         }
 
@@ -105,8 +103,7 @@ namespace Reach.Framework.Interaction
 
         public bool TryInteract(PossessableCharacter currentPlayer)
         {
-            if (!CanInteract(currentPlayer)) return false;
-            if (definition == null) return false;
+            if (!CanInteract(currentPlayer) || definition == null) return false;
 
             StartCoroutine(CoRun(currentPlayer));
             return true;
@@ -119,56 +116,62 @@ namespace Reach.Framework.Interaction
         IEnumerator CoRun(PossessableCharacter player)
         {
             _busy = true;
+            var charDef = player != null ? player.Definition : null;
+            var response = definition.GetResponseFor(charDef);
+
+            if (debugLogs)
+                Debug.Log($"[InteractableObject] '{name}' triggered by '{charDef?.displayName ?? "?"}' " +
+                          $"(specific response: {(response != definition.defaultResponse ? "yes" : "fallback")})");
 
             switch (definition.mode)
             {
                 case InteractActionMode.OneShot:
-                    yield return RunOneShot();
+                    yield return RunOneShot(response);
                     break;
 
                 case InteractActionMode.TwoStep:
                     if (!_armedSecondStep)
                     {
-                        yield return RunFirstStep();
+                        yield return RunFirstStep(response);
                         _armedSecondStep = true;
                         _busy = false;
                         yield break;
                     }
                     else
                     {
-                        yield return RunSecondStep();
+                        yield return RunSecondStep(response);
                     }
                     break;
             }
 
+            _interactedBy = charDef;
             CompleteAndApply();
             _busy = false;
         }
 
-        IEnumerator RunOneShot()
+        IEnumerator RunOneShot(CharacterResponse response)
         {
-            ShowResponseText();
+            ShowResponseText(response);
 
-            if (definition.audioClip != null)
+            if (response.audioClip != null)
             {
-                PlayAudio(definition.audioClip);
-                yield return new WaitForSeconds(definition.audioClip.length);
+                PlayAudio(response.audioClip, response.audioVolume);
+                yield return new WaitForSeconds(response.audioClip.length);
             }
-            else if (!string.IsNullOrEmpty(definition.responseText))
+            else if (!string.IsNullOrEmpty(response.responseText))
             {
-                yield return new WaitForSeconds(definition.responseDurationSeconds);
+                yield return new WaitForSeconds(response.responseDurationSeconds);
             }
         }
 
-        IEnumerator RunFirstStep()
+        IEnumerator RunFirstStep(CharacterResponse response)
         {
-            // First press: play first-step audio if any, show response (which is reused as priming hint)
-            ShowResponseText();
+            ShowResponseText(response);
 
-            if (definition.firstStepAudioClip != null)
+            if (response.firstStepAudioClip != null)
             {
-                PlayAudio(definition.firstStepAudioClip);
-                yield return new WaitForSeconds(definition.firstStepAudioClip.length);
+                PlayAudio(response.firstStepAudioClip, response.audioVolume);
+                yield return new WaitForSeconds(response.firstStepAudioClip.length);
             }
             else
             {
@@ -176,18 +179,18 @@ namespace Reach.Framework.Interaction
             }
         }
 
-        IEnumerator RunSecondStep()
+        IEnumerator RunSecondStep(CharacterResponse response)
         {
-            ShowResponseText();
+            ShowResponseText(response);
 
-            if (definition.audioClip != null)
+            if (response.audioClip != null)
             {
-                PlayAudio(definition.audioClip);
-                yield return new WaitForSeconds(definition.audioClip.length);
+                PlayAudio(response.audioClip, response.audioVolume);
+                yield return new WaitForSeconds(response.audioClip.length);
             }
-            else if (!string.IsNullOrEmpty(definition.responseText))
+            else if (!string.IsNullOrEmpty(response.responseText))
             {
-                yield return new WaitForSeconds(definition.responseDurationSeconds);
+                yield return new WaitForSeconds(response.responseDurationSeconds);
             }
         }
 
@@ -195,20 +198,20 @@ namespace Reach.Framework.Interaction
         // Helpers
         // ============================================================
 
-        void ShowResponseText()
+        void ShowResponseText(CharacterResponse response)
         {
-            if (string.IsNullOrEmpty(definition.responseText)) return;
+            if (response == null || string.IsNullOrEmpty(response.responseText)) return;
 
             var hud = GameContext.Instance?.Hud;
             if (hud == null) return;
 
-            hud.SetTimed(definition.responseText, definition.responseDurationSeconds);
+            hud.SetTimed(response.responseText, response.responseDurationSeconds);
         }
 
-        void PlayAudio(AudioClip clip)
+        void PlayAudio(AudioClip clip, float volume)
         {
             if (audioSource == null || clip == null) return;
-            audioSource.volume = definition.audioVolume;
+            audioSource.volume = volume;
             audioSource.PlayOneShot(clip);
         }
 
@@ -216,7 +219,8 @@ namespace Reach.Framework.Interaction
         {
             _completed = true;
 
-            if (debugLogs) Debug.Log($"[InteractableObject] '{name}' completed (unlocksOutreach={definition.unlocksOutreach})");
+            if (debugLogs) Debug.Log($"[InteractableObject] '{name}' completed " +
+                                      $"(by={_interactedBy?.displayName ?? "?"}, unlocksOutreach={definition.unlocksOutreach})");
 
             if (definition.hideOnComplete)
                 gameObject.SetActive(false);

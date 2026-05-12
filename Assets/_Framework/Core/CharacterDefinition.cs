@@ -55,9 +55,5 @@ namespace Reach.Framework.Core
 
         [Range(0.5f, 1.5f)]
         public float ambientPitch = 1f;
-
-        [Header("Interact Object")]
-        [Tooltip("Definition of the one interactable object this character has.")]
-        public InteractableObjectDefinition interactObject;
     }
 }
